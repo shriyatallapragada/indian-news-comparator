@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>News Comparator</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 500px;
+      min-height: 350px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-size: 13px;
+      background: #1e242d; /* Darker theme background */
+      color: #e8eaed;
+    }
+
+    /* ── Top Nav Bar ──────────────────────────────────────────────────── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #14181d;
+      border-bottom: 1px solid #2d3540;
+      padding: 12px 16px;
+    }
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      color: #e8eaed;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .topbar-brand .brand-icon {
+      width: 24px; height: 24px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .topbar-actions { display: flex; gap: 8px; }
+    .btn-outline {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid #455060;
+      border-radius: 6px;
+      background: #232933;
+      cursor: pointer;
+      color: #e8eaed;
+      display: flex; align-items: center; gap: 5px;
+      transition: all 0.2s;
+    }
+    .btn-outline:hover { background: #353e4d; }
+    .btn-outline.primary {
+      background: #3b82f6;
+      color: #fff;
+      border-color: #3b82f6;
+    }
+    .btn-outline.primary:hover { background: #2563eb; }
+
+    /* ── Start Screen ─────────────────────────────────────────────────── */
+    #start-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 300px;
+      background: #1e242d;
+    }
+    .main-get-news-btn {
+      padding: 12px 32px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .main-get-news-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+    }
+    .main-get-news-btn:active {
+      transform: translateY(0);
+    }
+
+    /* ── Main Content Area ────────────────────────────────────────────── */
+    #result, #about-screen { display: none; padding: 12px; }
+
+    /* ── Loading ──────────────────────────────────────────────────────── */
+    .loader-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      gap: 14px;
+    }
+    .loader-msg { font-size: 13px; color: #9aa0a6; }
+    .spinner { width: 36px; height: 36px; position: relative; }
+    .spinner::before, .spinner::after {
+      content: ""; position: absolute; border-radius: 50%; border: 3px solid transparent;
+    }
+    .spinner::before {
+      inset: 0; border-top-color: #3b82f6; animation: spin 0.9s linear infinite;
+    }
+    .spinner::after {
+      inset: 6px; border-top-color: #9aa0a6; animation: spin 0.7s linear infinite reverse;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── UI Cards Base ────────────────────────────────────────────────── */
+    .card {
+      background: #28303d;
+      border: 1px solid #3c4656;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      padding: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .card-header {
+      font-size: 11px;
+      font-weight: 700;
+      color: #9aa0a6;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ── Section 1: Original Article ──────────────────────────────────── */
+    .article-title {
+      font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 12px; line-height: 1.3;
+    }
+    .analysis-text {
+      font-size: 13px; line-height: 1.5; color: #d1d5db; margin-bottom: 6px;
+    }
+    .analysis-label { font-weight: 700; color: #fff; }
+
+    /* ── Section 2: Bias Bar ──────────────────────────────────────────── */
+    .bias-bar-container { position: relative; margin: 25px 0 15px; }
+    .bias-bar-track {
+      height: 10px;
+      border-radius: 5px;
+      background: linear-gradient(to right, #e74c3c 0%, #f39c12 50%, #3498db 100%);
+    }
+    .bias-bar-marker {
+      position: absolute;
+      top: -10px;
+      width: 4px; height: 30px;
+      background: #fff;
+      border-radius: 2px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
+      transform: translateX(-50%);
+      transition: left 0.5s ease;
+    }
+    .bias-score-bubble {
+      position: absolute;
+      top: -30px;
+      transform: translateX(-50%);
+      background: #e8eaed;
+      color: #1a1a1a;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .bias-bar-labels {
+      display: flex; justify-content: space-between; font-size: 11px; margin-top: 8px; color: #9aa0a6;
+    }
+    .lbl-left { color: #e74c3c; font-weight: 600; }
+    .lbl-center { color: #f39c12; font-weight: 600; }
+    .lbl-right { color: #3498db; font-weight: 600; }
+    .lean-text { text-align: center; font-size: 12px; font-weight: 600; margin-top: 5px; color: #fff; }
+
+    /* ── Section 3: Perspectives Tabs ─────────────────────────────────── */
+    .perspective-tabs {
+      display: flex;
+      background: #1e242d;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 12px;
+      border: 1px solid #3c4656;
+    }
+    .perspective-tab {
+      flex: 1; padding: 10px 4px; text-align: center; font-size: 12px; font-weight: 600;
+      cursor: pointer; background: transparent; border: none; color: #9aa0a6;
+      border-right: 1px solid #3c4656; transition: background 0.2s;
+    }
+    .perspective-tab:last-child { border-right: none; }
+    .perspective-tab.active-left   { background: #3d2222; color: #e74c3c; }
+    .perspective-tab.active-center { background: #3b2c15; color: #f39c12; }
+    .perspective-tab.active-right  { background: #1a2c3f; color: #3498db; }
+
+    .perspective-panel { display: none; }
+    .perspective-panel.active { display: block; }
+    .perspective-summary { font-size: 12px; line-height: 1.5; margin-bottom: 10px; color: #d1d5db; }
+    
+    .article-link-card {
+      background: #1e242d; border: 1px solid #3c4656; border-radius: 6px;
+      padding: 10px; margin-bottom: 8px; cursor: pointer; transition: background 0.15s;
+    }
+    .article-link-card:hover { background: #2d3540; }
+    .alc-source { font-size: 11px; font-weight: 600; color: #9aa0a6; margin-bottom: 4px; display: flex; justify-content: space-between; }
+    .alc-title { font-size: 12px; color: #fff; line-height: 1.4; }
+
+    /* ── Section 4: Topic Comparison ──────────────────────────────────── */
+    .comparison-list { list-style-type: disc; padding-left: 20px; color: #d1d5db; font-size: 12px; line-height: 1.6; }
+    .comparison-list li { margin-bottom: 4px; }
+
+    /* ── Errors ───────────────────────────────────────────────────────── */
+    .error-msg { color: #e74c3c; font-size: 13px; text-align: center; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-icon">📰</div>
+      News Comparator
+    </div>
+    <div class="topbar-actions">
+      <button class="btn-outline" id="btnWhatIs">About</button>
+    </div>
+  </div>
+
+  <div id="start-screen">
+    <button class="main-get-news-btn" id="btnStart">Get News</button>
+  </div>
+
+  <div id="result"></div>
+
+  <div id="about-screen">
+    <div class="card">
+      <div class="card-header">About News Comparator</div>
+      <p class="analysis-text" style="margin-bottom: 12px;">News outlets lean politically based on which values, policies, and interpretations they tend to emphasise. It does not mean the reporting is false — it means the framing, selection of quotes, and emphasis may differ.News Comparator fetches the same story from multiple sources and shows how differently it is reported based on political leaning — so you can form a more complete picture.</p>
+      
+      <div style="margin-bottom: 12px;">
+        <span style="color: #e74c3c; font-weight: bold;">Left Perspectives:</span>
+        <span style="color: #d1d5db; font-size: 12px;"> Focuses on equality, government role, worker & minority rights, environmental protections.</span>
+      </div>
+      <div style="margin-bottom: 12px;">
+        <span style="color: #f39c12; font-weight: bold;">Center Perspectives:</span>
+        <span style="color: #d1d5db; font-size: 12px;"> Aims to report facts with minimal political framing. Focuses heavily on direct quotes and objective events.</span>
+      </div>
+      <div style="margin-bottom: 12px;">
+        <span style="color: #3498db; font-weight: bold;">Right Perspectives:</span>
+        <span style="color: #d1d5db; font-size: 12px;"> Focuses on free markets, tradition, national security, individual liberty, and less regulation.</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
