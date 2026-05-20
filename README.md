@@ -8,9 +8,9 @@ A Chrome extension that analyses the political bias of any Indian news article y
 
 1. You open a news article in Chrome and click **Get News** in the extension popup.
 2. The extension extracts the article text and sends it to the backend.
-3. **Port 8000 — Main API** (`api/main.py`): classifies the article's bias, extracts named entities, and fetches related articles from NewsAPI / The Guardian.
-4. **Port 8001 — ML Engine** (`api/engine.py`): runs the article through the full ML pipeline to produce a bias score, retrieves a semantically similar alternative article from ChromaDB, and calls the Groq LLM to generate a plain-English explanation.
-5. The extension displays the bias score on a −5 to +5 slider, Left / Center / Right perspective panels, and a cross-article comparison section.
+3. **Port 8000 — Main API** (`api/main.py`): classifies the article's bias, extracts topic anchors and named entities, and fetches related articles from NewsAPI / The Guardian.
+4. **Port 8001 — ML Engine** (`api/engine.py`): runs the article through the full ML pipeline to produce a bias score, retrieves a relevant alternative article from ChromaDB, and calls the Groq LLM to generate a plain-English explanation.
+5. The extension displays the bias score on a -5 to +5 slider, Left / Center / Right perspective panels, and a cross-article comparison section. If no closely related article is found, the comparison section avoids hallucinated comparisons and reports that no close match is available.
 
 ---
 
@@ -48,6 +48,22 @@ The model was trained on 2,594 labeled Indian news article snippets using a two-
 | 2 | 2 | End-to-end fine-tune (IndicBERT last layer + pooler unfrozen) | 2e-5 (BERT) / 1e-3 (head) |
 
 Final accuracy: **65.4%** on a 3-class problem (random baseline = 33%).
+
+---
+
+## Related Article Matching
+
+Cross-article comparison uses both semantic search and topic-anchor filtering. This prevents the LLM from comparing the current article with an unrelated article that only happens to share a generic term such as "Supreme Court".
+
+The matching flow is:
+
+1. Extract stable topic terms from the current article, including acronyms and domain terms such as `NEET`, `NTA`, `UPSC`, `paper leak`, `Supreme Court`, and `National Testing Agency`.
+2. Query ChromaDB for semantically close candidates.
+3. Reject candidates that do not share enough topic overlap. For exam-related stories, at least one exam anchor such as `NEET`, `NTA`, or `paper leak` must match.
+4. If local ChromaDB has no match, fetch live articles from NewsAPI or The Guardian and apply the same relevance filter before ingestion.
+5. Only matched articles are sent to the LLM for "what's missing" analysis.
+
+This is intentionally stricter than pure vector similarity. It may return fewer comparison articles, but it avoids misleading outputs such as comparing a NEET paper-leak story with unrelated Supreme Court coverage.
 
 ---
 
@@ -203,15 +219,15 @@ Navigate to any Indian news article, click the extension icon, and press **Get N
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/analyze` | Classify bias and extract entities from article text |
-| POST | `/api/related` | Find related Left/Center/Right articles from ChromaDB |
+| POST | `/api/related` | Find related Left/Center/Right articles from ChromaDB using semantic search plus topic-anchor filtering |
 | POST | `/api/ingest` | Ingest an article into ChromaDB |
-| GET | `/news` | Fetch Left/Center/Right articles from NewsAPI/Guardian |
+| GET | `/news` | Fetch Left/Center/Right articles from NewsAPI/Guardian and reject unrelated fallback results |
 
 ### Port 8001 — ML Engine
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/analyze_perspective` | Full ML pipeline — bias score, alternative article, LLM insights |
+| POST | `/analyze_perspective` | Full ML pipeline — bias score, relevant alternative article, LLM insights |
 | POST | `/api/ingest_live_batch` | Batch ingest articles into the engine's ChromaDB |
 
 ---
@@ -224,4 +240,4 @@ Navigate to any Indian news article, click the extension icon, and press **Get N
 
 **Why Groq + LLaMA for explanations?** The ML model produces a score but cannot explain it in plain English. The LLM receives the score and both article texts and generates a one-sentence explanation grounded in specific word choices, making the output interpretable.
 
-**Why ChromaDB?** Semantic vector search allows the engine to find thematically related articles even when they share no exact keywords — important for matching Indian political stories across sources with different naming conventions.
+**Why ChromaDB?** Semantic vector search helps the engine find thematically related articles even when different outlets phrase the same story differently. The app now combines that semantic search with topic-anchor checks so generic overlap does not create false comparisons.
