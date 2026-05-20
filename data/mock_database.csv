@@ -1,5 +1,18 @@
 article_id,topic,source,bias_label,url,text
-101,Elections,PTI,Neutral,https://www.ptinews.com,The Election Commission announced the voting dates for the state assembly today in a press conference.
-102,Elections,ThePrint,Centrist,https://theprint.in,State assembly polling dates were officially released by the EC today setting the stage for a major political showdown.
+101,Elections,PTI,Center,https://www.ptinews.com,The Election Commission announced the voting dates for the state assembly today in a press conference.
+102,Elections,ThePrint,Center,https://theprint.in,State assembly polling dates were officially released by the EC today setting the stage for a major political showdown.
 103,Elections,OpIndia,Right,https://opindia.com,"The corrupt establishment in New Delhi pressured the Election Commission to announce the dates today, completely ignoring the demands of Manickam Tagore."
 104,Elections,NationalHerald,Left,https://www.nationalheraldindia.com,Democratic forces gear up as the EC finally succumbs to pressure and releases the long-delayed election schedule.
+105,Politics,TheWire,Left,https://thewire.in,"Workers and minorities face increasing hardship as the government's latest policy ignores the poor, activists say."
+106,Politics,TheHindu,Center,https://www.thehindu.com,The government announced a new economic policy today. Analysts say the impact will be mixed across different sectors.
+107,Politics,Swarajya,Right,https://swarajyamag.com,"Government overreach and excessive regulation are stifling economic growth, critics argue, as new rules take effect."
+108,Economy,BusinessLine,Center,https://www.thehindubusinessline.com,The Reserve Bank of India held interest rates steady at its latest monetary policy meeting citing stable inflation.
+109,Economy,NationalHerald,Left,https://www.nationalheraldindia.com,Corporate profits soar while workers struggle — the widening inequality gap demands urgent government intervention.
+110,Economy,OpIndia,Right,https://opindia.com,Free market reforms are being undermined by bureaucratic red tape that is driving away investment and killing jobs.
+111,TamilNadu,PTI,Center,https://www.ptinews.com,Tamil Nadu Chief Minister C. Joseph Vijay took oath at a ceremony attended by senior party leaders and dignitaries.
+112,TamilNadu,TheWire,Left,https://thewire.in,"TVK's historic victory signals a mandate for social justice, with Vijay promising to prioritise marginalised communities."
+113,TamilNadu,Swarajya,Right,https://swarajyamag.com,The new Tamil Nadu government must resist pressure from vested interests and focus on economic development over populism.
+114,TamilNadu,TheHindu,Center,https://www.thehindu.com,"The Tamil Nadu Assembly Speaker confirmed the floor test will proceed smoothly, with letters received from all factions."
+115,National,PTI,Center,https://www.ptinews.com,The Supreme Court issued notice to the Centre on a petition challenging the constitutional validity of the new legislation.
+116,National,TheWire,Left,https://thewire.in,Civil society groups condemn the new law as an attack on democratic freedoms and a threat to minority rights.
+117,National,OpIndia,Right,https://opindia.com,The judiciary must stop overstepping its bounds and allow elected representatives to govern without interference.

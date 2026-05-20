@@ -39,6 +39,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from model import IndicNewsEmbedder
+from model.bias_classifier import FullBiasPipeline
 
 # ── NLTK sentence tokenizer (downloaded once) ──────────────────────────────
 nltk.download("punkt", quiet=True)
@@ -67,8 +68,9 @@ _BIAS_ANCHOR_TEXTS = {
 
 # ── Singletons ─────────────────────────────────────────────────────────────
 _embedder: Optional[IndicNewsEmbedder] = None
+_pipeline: Optional[FullBiasPipeline] = None
 _collection = None
-_anchor_vectors: dict = {}  # populated lazily on first score computation
+_anchor_vectors: dict = {}  # kept as fallback if pipeline weights missing
 
 
 def _get_embedder() -> IndicNewsEmbedder:
@@ -76,6 +78,16 @@ def _get_embedder() -> IndicNewsEmbedder:
     if _embedder is None:
         _embedder = IndicNewsEmbedder()
     return _embedder
+
+
+def _get_pipeline() -> FullBiasPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = FullBiasPipeline()
+        _HEAD_PATH = os.path.join(os.path.dirname(__file__), "..", "train", "bias_classifier.pth")
+        _pipeline.load(_HEAD_PATH)
+        _pipeline.eval()
+    return _pipeline
 
 
 def _get_collection():
@@ -297,21 +309,38 @@ def _get_anchor_vectors() -> dict:
 
 def _compute_bias_score(text: str) -> float:
     """
-    Returns a score on the -5..+5 axis using cosine similarity to Left/Right anchors.
-    Positive = Right-leaning, Negative = Left-leaning.
+    Returns a score on the -5..+5 axis.
+
+    Primary path: IndicBERT → LiquidBrain → BiasClassifier
+      score = (P_right - P_left) * 5
+
+    Fallback (if classifier weights not trained yet): cosine similarity
+    to Left/Right anchor texts — same as the original approach.
     """
     embedder = _get_embedder()
     with torch.no_grad():
-        hidden   = embedder.get_embeddings(text)
-        user_vec = hidden.mean(dim=1)                    # (1, 768)
+        hidden = embedder.get_embeddings(text)   # (1, seq, 768)
 
-    anchors = _get_anchor_vectors()
+    pipeline = _get_pipeline()
+
+    # Primary: use the trained LNN + classifier head
+    if pipeline is not None:
+        try:
+            score = pipeline.predict_score(hidden)
+            print(f"[engine] LNN bias score: {score:+.2f}")
+            return score
+        except Exception as e:
+            print(f"[engine] LNN scoring failed ({e}), falling back to anchors")
+
+    # Fallback: anchor cosine similarity
+    user_vec = hidden.mean(dim=1)
+    anchors  = _get_anchor_vectors()
     sim_left  = F.cosine_similarity(user_vec, anchors["Left"]).item()
     sim_right = F.cosine_similarity(user_vec, anchors["Right"]).item()
-
-    # (sim_right - sim_left) is in -1..+1; scale to -5..+5
     raw = (sim_right - sim_left)
-    return round(raw * 5, 2)
+    score = round(raw * 5, 2)
+    print(f"[engine] Anchor fallback bias score: {score:+.2f}")
+    return score
 
 
 # ── LLM: Smart Insight Generation ────────────────────────────────────────

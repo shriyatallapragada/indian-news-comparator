@@ -295,6 +295,8 @@ function buildLeavesOutPoints(bias, left, center, right) {
 }
 
 // ── Engine API (port 8001) ─────────────────────────────────────────────────
+// Update ENGINE_BASE in background.js when deploying
+const ENGINE_BASE = "http://127.0.0.1:8001";
 
 async function fetchPerspectiveData(userText, targetLean) {
   const comparisonList = document.getElementById("comparison-list");
@@ -303,7 +305,7 @@ async function fetchPerspectiveData(userText, targetLean) {
   }
 
   try {
-    const res = await fetch("http://127.0.0.1:8001/analyze_perspective", {
+    const res = await fetch(`${ENGINE_BASE}/analyze_perspective`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_text: userText, target_lean: targetLean }),
