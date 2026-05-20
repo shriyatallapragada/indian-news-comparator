@@ -13,6 +13,18 @@ function getDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return url; }
 }
 
+function sendRuntimeMessage(message) {
+  return new Promise(function (resolve) {
+    chrome.runtime.sendMessage(message, function (response) {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
 // ── Navigation State ───────────────────────────────────────────────────────
 const startScreen = document.getElementById("start-screen");
 const resultScreen = document.getElementById("result");
@@ -22,6 +34,9 @@ const aboutScreen = document.getElementById("about-screen");
 var _currentArticleText = "";
 // Holds the real bias score from the engine so the bar can be updated
 var _engineBiasScore = null;
+// Holds the already-rendered related articles so comparison can degrade gracefully.
+var _currentBiasData = null;
+var _currentNewsData = null;
 
 document.getElementById("btnStart").addEventListener("click", getNews);
 document.getElementById("btnWhatIs").addEventListener("click", toggleAbout);
@@ -148,6 +163,9 @@ function getNews() {
 
 // ── Render full UI ─────────────────────────────────────────────────────────
 function renderResults(biasData, newsData, tab) {
+  _currentBiasData = biasData || null;
+  _currentNewsData = newsData || null;
+
   const biasRaw   = (biasData.bias_classification || "Center");
   const bias      = biasRaw.toLowerCase();
   const summary   = biasData.article_summary || "Summary not available.";
@@ -222,6 +240,9 @@ function renderResults(biasData, newsData, tab) {
 
   resultScreen.innerHTML = html;
 
+  // Reset engine cache for new article
+  _engineCache = { Left: null, Center: null, Right: null };
+
   // Clear any stale comparison content immediately, then fetch fresh
   var listEl = document.getElementById("comparison-list");
   if (listEl) listEl.innerHTML = '<li style="color:#9aa0a6;">⏳ Loading context analysis…</li>';
@@ -277,55 +298,77 @@ function buildArticleLinkCard(article) {
 // ── Cross-Article Comparison Generation ────────────────────────────────────
 function buildLeavesOutPoints(bias, left, center, right) {
   let points = [];
-  if (bias === "left" && right && right.summary) {
-    points.push(`Right-leaning sources focus on: ${right.summary.substring(0, 80)}...`);
-  } else if (bias === "right" && left && left.summary) {
-    points.push(`Left-leaning sources focus on: ${left.summary.substring(0, 80)}...`);
-  } else {
+  const leftText = getArticleSnippet(left);
+  const centerText = getArticleSnippet(center);
+  const rightText = getArticleSnippet(right);
+
+  if (!leftText && !centerText && !rightText) {
+    return "";
+  }
+
+  if (bias === "left" && rightText) {
+    points.push(`Right-leaning sources focus on: ${rightText.substring(0, 80)}...`);
+  } else if (bias === "right" && leftText) {
+    points.push(`Left-leaning sources focus on: ${leftText.substring(0, 80)}...`);
+  } else if (leftText || rightText) {
     points.push(`Other ideological sides may re-frame this core event emphasizing different socio-economic impacts.`);
   }
 
-  if (center && center.summary) {
-    points.push(`Neutral reporting adds context regarding: ${center.summary.substring(0, 80)}...`);
-  } else {
+  if (centerText) {
+    points.push(`Neutral reporting adds context regarding: ${centerText.substring(0, 80)}...`);
+  } else if (leftText || rightText) {
     points.push(`A broader look at related topics suggests missing factual context or alternative policy proposals.`);
   }
   
   return points.map(p => `<li>${escHtml(p)}</li>`).join("");
 }
 
-// ── Engine API (port 8001) ─────────────────────────────────────────────────
-// Update ENGINE_BASE in background.js when deploying
-const ENGINE_BASE = "http://127.0.0.1:8001";
+function getArticleSnippet(article) {
+  if (!article) return "";
+  return article.summary || article.description || article.title || "";
+}
+
+// Cache engine results per tab so switching doesn't re-fetch
+var _engineCache = { Left: null, Center: null, Right: null };
 
 async function fetchPerspectiveData(userText, targetLean) {
   const comparisonList = document.getElementById("comparison-list");
+
+  // If we already have a result for this tab, just re-render it
+  if (_engineCache[targetLean]) {
+    updateUI(_engineCache[targetLean], targetLean);
+    return;
+  }
+
   if (comparisonList) {
     comparisonList.innerHTML = '<li style="color:#9aa0a6;">⏳ Loading context analysis…</li>';
   }
 
   try {
-    const res = await fetch(`${ENGINE_BASE}/analyze_perspective`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_text: userText, target_lean: targetLean }),
+    const response = await sendRuntimeMessage({
+      action: "perspective",
+      payload: { user_text: userText, target_lean: targetLean },
     });
 
-    if (!res.ok) throw new Error("Engine returned " + res.status);
-    const data = await res.json();
+    if (!response || !response.ok) {
+      throw new Error((response && response.error) || "Engine unavailable");
+    }
+
+    const data = response.data;
     console.log("Engine response:", data);
+
+    // Cache and render
+    _engineCache[targetLean] = data;
     updateUI(data, targetLean);
 
   } catch (err) {
     console.error("Engine fetch error:", err);
-    if (comparisonList) {
-      comparisonList.innerHTML = '<li style="color:#9aa0a6;">Context analysis unavailable — ' + escHtml(err.message) + '</li>';
-    }
+    renderFallbackComparison(targetLean, err.message);
   }
 }
 
 function updateUI(data, targetLean) {
-  // ── Update bias bar with real engine score ─────────────────────────
+  // ── Update bias bar with real engine score (only on first valid score) ──
   if (data.bias_score !== undefined && data.bias_score !== null) {
     const score = parseFloat(data.bias_score);
     const pct   = Math.min(100, Math.max(0, ((score + 5) / 10) * 100));
@@ -346,6 +389,12 @@ function updateUI(data, targetLean) {
 
   listEl.innerHTML = "";
 
+  // Engine found no matching article in ChromaDB for this topic
+  if (!data.reasoning && !data.missing_context && !data.perspective_summary) {
+    renderFallbackComparison(targetLean);
+    return;
+  }
+
   if (data.reasoning) {
     const li = document.createElement("li");
     li.innerHTML = "<strong>Why it leans this way:</strong> " + escHtml(data.reasoning);
@@ -357,12 +406,28 @@ function updateUI(data, targetLean) {
     li.innerHTML = "<strong>What's missing:</strong> " + escHtml(data.missing_context);
     listEl.appendChild(li);
   }
+}
 
-  if (!data.reasoning && !data.missing_context) {
-    const li = document.createElement("li");
-    li.textContent = "No context analysis available.";
-    listEl.appendChild(li);
+function renderFallbackComparison(targetLean, errorMessage) {
+  const listEl = document.getElementById("comparison-list");
+  if (!listEl) return;
+
+  const news = _currentNewsData || {};
+  const bias = ((_currentBiasData && _currentBiasData.bias_classification) || "center").toLowerCase();
+  const left = news.left || null;
+  const center = news.center || null;
+  const right = news.right || null;
+  const fallbackHtml = buildLeavesOutPoints(bias, left, center, right);
+
+  if (fallbackHtml) {
+    listEl.innerHTML = fallbackHtml;
+    return;
   }
+
+  const suffix = errorMessage ? " (" + errorMessage + ")" : "";
+  listEl.innerHTML = '<li style="color:#9aa0a6;">No closely related ' +
+    escHtml(targetLean) + '-leaning article found for comparison' +
+    escHtml(suffix) + '.</li>';
 }
 
 function capitalise(str) {

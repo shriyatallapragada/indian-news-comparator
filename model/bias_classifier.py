@@ -48,7 +48,7 @@ class BiasClassifier(nn.Module):
         self.fc = nn.Linear(input_dim, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)
+        return self.fc(x.to(next(self.parameters()).device))
 
 
 class FullBiasPipeline(nn.Module):
@@ -69,6 +69,9 @@ class FullBiasPipeline(nn.Module):
                                               total_neurons=64,
                                               output_dim=32)
         self.classifier = BiasClassifier(input_dim=32, num_classes=3)
+        # Move classifier to same device as brain
+        device = self.brain.device
+        self.classifier = self.classifier.to(device)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """

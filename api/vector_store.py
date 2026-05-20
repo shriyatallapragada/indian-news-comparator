@@ -7,6 +7,7 @@ find_related_by_entities() → retrieve best Left/Center/Right match
 
 import sys
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -27,6 +28,15 @@ _DB_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
 _COLLECTION_NAME = "news_articles"
 _TIME_WINDOW_HOURS = 48
 _MIN_SIMILARITY = 0.72  # below this score, treat as no match
+_TOPIC_ANCHORS = {
+    "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
+    "paper leak", "paper leaks", "medical entrance",
+}
+_STOP_WORDS = {
+    "after", "also", "article", "court", "digest", "from", "have", "large",
+    "news", "paper", "revisiting", "said", "says", "supreme", "that",
+    "their", "this", "with", "would",
+}
 
 
 def _get_embedder() -> IndicNewsEmbedder:
@@ -57,6 +67,63 @@ def _embed(text: str) -> list:
     tensor = embedder.get_embeddings(text)
     pooled = tensor.mean(dim=1).squeeze(0)  # (768,)
     return pooled.tolist()
+
+
+def _normalise_term(term: str) -> str:
+    return re.sub(r"\s+", " ", term.strip().lower().strip("'\".,:;"))
+
+
+def _extract_topic_terms(text: str, named_entities: list = None) -> list:
+    """Extract terms that must overlap before an article is considered related."""
+    terms = []
+    seen = set()
+
+    def add(term: str):
+        key = _normalise_term(term)
+        if not key or key in seen:
+            return
+        if len(key) < 3:
+            return
+        seen.add(key)
+        terms.append(key)
+
+    for entity in named_entities or []:
+        add(entity)
+
+    for acronym in re.findall(r"\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b", text or ""):
+        add(acronym)
+
+    lowered = (text or "").lower()
+    for phrase in _TOPIC_ANCHORS | {"supreme court", "national testing agency"}:
+        if phrase in lowered:
+            add(phrase)
+
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", text or ""):
+        key = _normalise_term(word)
+        if key not in _STOP_WORDS:
+            add(key)
+        if len(terms) >= 10:
+            break
+
+    return terms[:10]
+
+
+def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: set) -> tuple[int, bool]:
+    candidate_lower = (candidate_text or "").lower()
+    hits = 0
+    anchor_hit = False
+
+    for term in query_terms:
+        term = _normalise_term(term)
+        words = [w for w in re.findall(r"[a-z0-9-]+", term) if len(w) >= 3]
+        direct_hit = term in candidate_lower or term in stored_terms
+        word_hit = any(re.search(rf"\b{re.escape(word)}\b", candidate_lower) for word in words)
+        if direct_hit or word_hit:
+            hits += 1
+            if term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS):
+                anchor_hit = True
+
+    return hits, anchor_hit
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -114,8 +181,11 @@ def find_related_by_entities(
     distances = results["distances"][0]
     documents = results["documents"][0]
 
-    # Normalise query entities for text matching
-    query_entities = [e.lower().strip() for e in named_entities if len(e.strip()) > 4]
+    query_terms = _extract_topic_terms(summary, named_entities)
+    needs_anchor = any(
+        term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS)
+        for term in query_terms
+    )
 
     buckets: dict = {"Left": [], "Center": [], "Right": []}
 
@@ -124,31 +194,30 @@ def find_related_by_entities(
         if bias not in buckets:
             continue
 
-        doc_lower = doc.lower()
-
-        # Count how many query entities appear in the document text
-        text_hits = sum(1 for e in query_entities if e in doc_lower)
-
-        # Also check stored named_entities metadata
         stored = set(
             e.strip().lower()
             for e in meta.get("named_entities", "").split(",") if e.strip()
         )
-        meta_hits = len(set(query_entities) & stored)
-
-        total_hits = text_hits + meta_hits
-        buckets[bias].append((total_hits, dist, meta, doc))
+        total_hits, anchor_hit = _count_topic_hits(query_terms, doc, stored)
+        similarity = 1 - float(dist)
+        buckets[bias].append((total_hits, anchor_hit, similarity, dist, meta, doc))
 
     output: dict = {"left": None, "center": None, "right": None}
 
     for key, bias_key in [("left", "Left"), ("center", "Center"), ("right", "Right")]:
         # Sort by entity hits first (desc), then cosine distance (asc)
-        candidates = sorted(buckets[bias_key], key=lambda x: (-x[0], x[1]))
-        for hits, dist, meta, doc in candidates:
+        candidates = sorted(buckets[bias_key], key=lambda x: (-x[0], -x[2], x[3]))
+        for hits, anchor_hit, similarity, dist, meta, doc in candidates:
             if hits == 0:
                 # No entity overlap at all — skip, let auto-fetch handle it
                 print(f"[vector_store] {bias_key} — no entity overlap, skipping")
                 break
+            if needs_anchor and not anchor_hit:
+                print(f"[vector_store] {bias_key} — missing topic anchor, skipping")
+                continue
+            if similarity < _MIN_SIMILARITY and hits < 2:
+                print(f"[vector_store] {bias_key} — weak similarity {similarity:.2f}, skipping")
+                continue
             output[key] = {
                 "title":  meta.get("title", ""),
                 "url":    meta.get("url", ""),
@@ -156,8 +225,7 @@ def find_related_by_entities(
                 "summary": doc[:200],
                 "bias":   bias_key,
             }
-            print(f"[vector_store] {bias_key} matched with {hits} entity hits")
+            print(f"[vector_store] {bias_key} matched with {hits} topic hits, similarity {similarity:.2f}")
             break
 
     return output
-

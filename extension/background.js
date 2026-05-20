@@ -36,4 +36,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "perspective") {
+    fetch(`${ENGINE_BASE}/analyze_perspective`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message.payload),
+    })
+      .then(r => {
+        if (!r.ok) throw new Error("Engine returned " + r.status);
+        return r.json();
+      })
+      .then(data => sendResponse({ ok: true, data }))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });

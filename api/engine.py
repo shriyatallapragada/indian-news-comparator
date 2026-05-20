@@ -27,8 +27,15 @@ from pydantic import BaseModel
 from typing import Optional, List
 from dotenv import load_dotenv
 from groq import AsyncGroq
+from news_fetch import build_search_terms, is_relevant
+
+import requests as http_requests
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
+
+_thread_pool = ThreadPoolExecutor(max_workers=3)
+_NEWSAPI_KEY  = "5856049a571545c9b02e5d355651f250"
 
 # ── spaCy model (loaded once) ──────────────────────────────────────────────
 _nlp = spacy.load("en_core_web_sm")
@@ -41,9 +48,19 @@ if _ROOT not in sys.path:
 from model import IndicNewsEmbedder
 from model.bias_classifier import FullBiasPipeline
 
-# ── NLTK sentence tokenizer (downloaded once) ──────────────────────────────
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
+# ── NLTK sentence tokenizer (download only if missing) ─────────────────────
+def _ensure_nltk_resource(resource: str, download_name: str) -> None:
+    try:
+        nltk.data.find(resource)
+    except LookupError:
+        try:
+            nltk.download(download_name, quiet=True)
+        except Exception as exc:
+            print(f"[engine] NLTK resource {download_name} unavailable: {exc}")
+
+
+_ensure_nltk_resource("tokenizers/punkt", "punkt")
+_ensure_nltk_resource("tokenizers/punkt_tab", "punkt_tab")
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 _DB_PATH  = os.path.join(os.path.dirname(__file__), "chroma_db")
@@ -71,6 +88,16 @@ _embedder: Optional[IndicNewsEmbedder] = None
 _pipeline: Optional[FullBiasPipeline] = None
 _collection = None
 _anchor_vectors: dict = {}  # kept as fallback if pipeline weights missing
+_MIN_PERSPECTIVE_SIMILARITY = 0.72
+_TOPIC_ANCHORS = {
+    "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
+    "paper leak", "paper leaks", "medical entrance",
+}
+_STOP_WORDS = {
+    "after", "also", "article", "court", "digest", "from", "have", "large",
+    "news", "paper", "revisiting", "said", "says", "supreme", "that",
+    "their", "this", "with", "would",
+}
 
 
 def _get_embedder() -> IndicNewsEmbedder:
@@ -115,6 +142,60 @@ def _to_tensor(text: str) -> torch.Tensor:
     embedder = _get_embedder()
     hidden = embedder.get_embeddings(text)          # (1, 512, 768)
     return hidden.mean(dim=1).cpu()                 # (1, 768)
+
+
+def _normalise_term(term: str) -> str:
+    return re.sub(r"\s+", " ", term.strip().lower().strip("'\".,:;"))
+
+
+def _extract_topic_terms(text: str, extra_terms: list = None) -> list:
+    terms = []
+    seen = set()
+
+    def add(term: str):
+        key = _normalise_term(term)
+        if not key or key in seen or len(key) < 3:
+            return
+        seen.add(key)
+        terms.append(key)
+
+    for term in extra_terms or []:
+        add(term)
+
+    for acronym in re.findall(r"\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b", text or ""):
+        add(acronym)
+
+    lowered = (text or "").lower()
+    for phrase in _TOPIC_ANCHORS | {"supreme court", "national testing agency"}:
+        if phrase in lowered:
+            add(phrase)
+
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", text or ""):
+        key = _normalise_term(word)
+        if key not in _STOP_WORDS:
+            add(key)
+        if len(terms) >= 10:
+            break
+
+    return terms[:10]
+
+
+def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: str = "") -> tuple[int, bool]:
+    candidate_lower = f"{candidate_text or ''} {stored_terms or ''}".lower()
+    hits = 0
+    anchor_hit = False
+
+    for term in query_terms:
+        term = _normalise_term(term)
+        words = [w for w in re.findall(r"[a-z0-9-]+", term) if len(w) >= 3]
+        direct_hit = term in candidate_lower
+        word_hit = any(re.search(rf"\b{re.escape(word)}\b", candidate_lower) for word in words)
+        if direct_hit or word_hit:
+            hits += 1
+            if term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS):
+                anchor_hit = True
+
+    return hits, anchor_hit
 
 
 # ── Requirement 1: ChromaDB Semantic Search ────────────────────────────────
@@ -173,29 +254,47 @@ def get_perspective(user_text_vector: list, target_bias: str,
 
     docs      = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
 
     if not docs:
         return None
 
-    user_text_lower = user_text.lower()
-
-    # Pick the first candidate whose text shares at least one meaningful word
-    # with the user's article (words > 4 chars to skip stopwords)
-    user_words = set(
-        w for w in user_text_lower.split()
-        if len(w) > 4 and w.isalpha()
+    query_terms = _extract_topic_terms(user_text)
+    needs_anchor = any(
+        term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS)
+        for term in query_terms
     )
 
-    for doc, meta in zip(docs, metadatas):
-        doc_lower = doc.lower()
-        overlap = sum(1 for w in user_words if w in doc_lower)
-        if overlap >= 2:
-            return {
-                "text":       doc,
-                "source":     meta.get("source", ""),
-                "bias_label": target_bias,
-                "url":        meta.get("url", ""),
-            }
+    candidates = []
+    for doc, meta, dist in zip(docs, metadatas, distances):
+        stored_terms = " ".join([
+            str(meta.get("topic", "")),
+            str(meta.get("title", "")),
+            str(meta.get("named_entities", "")),
+        ])
+        hits, anchor_hit = _count_topic_hits(query_terms, doc, stored_terms)
+        similarity = 1 - float(dist)
+        candidates.append((hits, anchor_hit, similarity, dist, doc, meta))
+
+    candidates.sort(key=lambda item: (-item[0], -item[2], item[3]))
+
+    for hits, anchor_hit, similarity, dist, doc, meta in candidates:
+        if hits == 0:
+            print(f"[engine] {target_bias} candidate rejected: no topic overlap")
+            break
+        if needs_anchor and not anchor_hit:
+            print(f"[engine] {target_bias} candidate rejected: missing topic anchor")
+            continue
+        if similarity < _MIN_PERSPECTIVE_SIMILARITY and hits < 2:
+            print(f"[engine] {target_bias} candidate rejected: weak similarity {similarity:.2f}")
+            continue
+        print(f"[engine] {target_bias} matched with {hits} topic hits, similarity {similarity:.2f}")
+        return {
+            "text":       doc,
+            "source":     meta.get("source", ""),
+            "bias_label": target_bias,
+            "url":        meta.get("url", ""),
+        }
 
     return None
 
@@ -394,6 +493,114 @@ Return ONLY a JSON object with exactly two keys: 'reasoning' (1 sentence explain
         }
 
 
+# ── Auto-seed: fetch & ingest live articles when ChromaDB has no match ────
+
+def _auto_seed(query: str, named_entities: list) -> None:
+    """
+    Fetches articles from NewsAPI/Guardian for `query`, classifies their bias,
+    and ingests them directly into ChromaDB — no HTTP round-trip needed.
+    Called in a thread so it doesn't block the async endpoint.
+    """
+    from nlp.analyzer import analyze_rss_summary
+
+    guardian_key = os.environ.get("GUARDIAN_API_KEY", "")
+    articles = []
+
+    # Try NewsAPI first
+    try:
+        r = http_requests.get(
+            "https://newsapi.org/v2/everything",
+            params={"q": query, "language": "en", "sortBy": "relevancy",
+                    "pageSize": 15, "apiKey": _NEWSAPI_KEY},
+            timeout=8,
+        ).json()
+        articles = r.get("articles", [])
+        print(f"[auto-seed] NewsAPI({query!r}) → {len(articles)} articles")
+    except Exception as e:
+        print(f"[auto-seed] NewsAPI error: {e}")
+
+    # Guardian fallback
+    if not articles and guardian_key:
+        try:
+            r = http_requests.get(
+                "https://content.guardianapis.com/search",
+                params={"q": query, "show-fields": "trailText,headline",
+                        "order-by": "relevance", "page-size": 15,
+                        "api-key": guardian_key},
+                timeout=8,
+            ).json()
+            results = r.get("response", {}).get("results", [])
+            articles = [
+                {"title":       item.get("fields", {}).get("headline", ""),
+                 "description": item.get("fields", {}).get("trailText", ""),
+                 "url":         item.get("webUrl", ""),
+                 "source":      {"name": "The Guardian"}}
+                for item in results
+            ]
+            print(f"[auto-seed] Guardian({query!r}) → {len(articles)} articles")
+        except Exception as e:
+            print(f"[auto-seed] Guardian error: {e}")
+
+    if not articles:
+        print(f"[auto-seed] No articles found for {query!r}")
+        return
+
+    collection  = _get_collection()
+    buckets     = {"Left": False, "Center": False, "Right": False}
+    used_sources = set()
+    search_terms = build_search_terms(query, named_entities, limit=6)
+
+    for article in articles:
+        text   = article.get("description") or article.get("title", "")
+        url    = article.get("url", "")
+        source_raw = article.get("source", {})
+        source = source_raw.get("name", "Unknown") if isinstance(source_raw, dict) else str(source_raw)
+
+        if not text or not url or "consent.yahoo" in url or source in used_sources:
+            continue
+        if search_terms and not is_relevant(article, search_terms, named_entities):
+            print(f"[auto-seed] Skipping unrelated article: {article.get('title', '')[:70]}")
+            continue
+
+        # Skip sports/entertainment noise
+        combined = (article.get("title", "") + " " + text)
+        if any(kw in combined.lower() for kw in [
+            "ipl", "stadium", "cricket", "score", "match", "batting",
+            "bollywood", "wedding", "recipe", "fitness", "marathon"
+        ]):
+            continue
+
+        tagged = analyze_rss_summary(text)
+        bias   = tagged.get("bias", "Center")
+
+        if buckets.get(bias):
+            continue  # already have one for this bias
+
+        article_id = url  # use URL as stable ID to avoid duplicates
+        vector     = _to_vector(text)
+
+        collection.upsert(
+            ids=[article_id],
+            embeddings=[vector],
+            documents=[text],
+            metadatas=[{
+                "source": source,
+                "bias":   bias,
+                "url":    url,
+                "topic":  query,
+                "title":  article.get("title", ""),
+                "named_entities": ",".join(tagged.get("named_entities", [])),
+                "core_event_slug": tagged.get("core_event_slug", ""),
+            }],
+        )
+        buckets[bias] = True
+        used_sources.add(source)
+        print(f"[auto-seed] Ingested [{bias}] {source}")
+
+        if all(buckets.values()):
+            break
+
+
 # ── Requirement 3: FastAPI endpoint ───────────────────────────────────────
 
 app = FastAPI(title="News Comparator Engine")
@@ -439,25 +646,40 @@ async def analyze_perspective(req: PerspectiveRequest):
     # 2. Find the closest article with the requested bias
     article = get_perspective(user_vector, req.target_lean, req.user_text)
 
+    # 3. If no match, auto-seed from live news and retry once
     if article is None:
+        print(f"[engine] No {req.target_lean} match — auto-seeding…")
+        query_terms = build_search_terms(req.user_text[:1000], [], limit=5)
+        query = " OR ".join(f'"{term}"' for term in query_terms[:3]) if query_terms else req.user_text[:80].strip()
+
+        print(f"[engine] Auto-seed query: {query!r}")
+        loop  = asyncio.get_event_loop()
+        await loop.run_in_executor(_thread_pool, _auto_seed, query, query_terms)
+        article = get_perspective(user_vector, req.target_lean, req.user_text)
+
+    if article is None:
+        # Still nothing — return bias score only, no perspective
+        pytorch_score = _compute_bias_score(req.user_text)
         return PerspectiveResponse(
             perspective_summary=None,
             source_name=None,
             url=None,
             missing_entities=[],
+            bias_score=round(pytorch_score, 2),
             reasoning=None,
             missing_context=None,
         )
 
-    # 3. Summarise the retrieved article
+    # 4. Summarise the retrieved article
     summary = extract_summary(article["text"], embedder)
 
-    # 4. Find entities in the alternative article missing from the user's article
+    # 5. Find entities in the alternative article missing from the user's article
     missing = get_missing_entities(req.user_text, article["text"])
 
-    # 5. Compute the real PyTorch bias score via cosine similarity to anchor vectors
+    # 6. Compute the real PyTorch bias score via the LNN pipeline
     pytorch_score = _compute_bias_score(req.user_text)
 
+    # 7. Generate LLM insights
     insights = await generate_smart_insights(
         original_text=req.user_text,
         alt_text=article["text"],

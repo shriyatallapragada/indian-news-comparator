@@ -10,7 +10,7 @@ load_dotenv()
 
 from nlp.analyzer import analyze_article, analyze_rss_summary
 from vector_store import ingest_article, find_related_by_entities
-from news_fetch import get_biased_news
+from news_fetch import get_biased_news, build_search_terms, is_relevant
 import asyncio
 import requests as http_requests
 from concurrent.futures import ThreadPoolExecutor
@@ -63,6 +63,8 @@ def _fetch_and_ingest(query: str, named_entities: list):
     if not articles:
         return
 
+    search_terms = build_search_terms(query, named_entities, limit=6)
+
     # Classify and ingest, one per bias
     used_sources = set()
     buckets = {"Left": False, "Center": False, "Right": False}
@@ -72,6 +74,9 @@ def _fetch_and_ingest(query: str, named_entities: list):
         url  = article.get("url", "")
         source = article.get("source", {}).get("name", "Unknown")
         if not text or not url or "consent.yahoo" in url or source in used_sources:
+            continue
+        if search_terms and not is_relevant(article, search_terms, named_entities):
+            print(f"[auto-fetch] Skipping unrelated article: {article.get('title', '')[:70]}")
             continue
         tagged = analyze_rss_summary(text)
         bias = tagged.get("bias", "Center")
@@ -173,11 +178,9 @@ async def related(request: RelatedRequest):
     missing_leans = [k for k in ["left", "center", "right"] if result.get(k) is None]
     
     if missing_leans and request.summary:
-        # Use top entities as query — short and specific works better than full summary
-        if request.named_entities:
-            query = " ".join(request.named_entities[:3])
-        else:
-            query = request.summary[:80].strip()
+        # Use stable topic terms rather than noisy bylines/title fragments.
+        terms = build_search_terms(request.summary, request.named_entities, limit=5)
+        query = " OR ".join(f'"{term}"' for term in terms[:3]) if terms else request.summary[:80].strip()
         print(f"[related] Missing {missing_leans} — auto-fetching for: {query!r}")
         
         loop = asyncio.get_event_loop()

@@ -1,3 +1,4 @@
+import re
 import requests
 import json
 import os
@@ -29,42 +30,172 @@ def sanitize_entity(entity: str) -> str:
     match = re.search(r'\(([A-Z]{2,})\)', entity)
     if match:
         return match.group(1).strip()
-    return re.sub(r'[()\[\]{}&|!]', '', entity).strip()
+    cleaned = re.sub(r'[()\[\]{}&|!]', '', entity).strip(" '\".,:;")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"^(?:the|a|an)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+# Generic single-word terms that make terrible NewsAPI queries
+_SKIP_ENTITIES = {
+    "india", "china", "us", "uk", "eu", "un", "ug", "the", "modi",
+    "government", "minister", "parliament", "court", "police",
+    "congress", "bjp", "party", "state", "new", "said",
+    "revisiting supreme court's", "quarterly digest",
+}
+
+_STOP_WORDS = {
+    "about", "after", "again", "against", "also", "amid", "among", "article",
+    "before", "being", "between", "could", "court", "digest", "during",
+    "from", "have", "into", "large", "news", "paper", "revisiting", "said",
+    "says", "should", "sources", "supreme", "that", "their", "there",
+    "these", "this", "those", "through", "under", "while", "with", "would",
+}
+
+_DOMAIN_TERMS = {
+    "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
+    "paper leak", "paper leaks", "leak", "cancellation", "medical entrance",
+}
+
+
+def extract_search_terms(text: str, limit: int = 6) -> list:
+    """Pull stable topic terms from article text without loading ML models."""
+    if not text:
+        return []
+
+    terms = []
+    seen = set()
+
+    def add(term: str):
+        term = sanitize_entity(term)
+        key = term.lower()
+        if not key or key in seen or key in _SKIP_ENTITIES:
+            return
+        if len(key) < 3 and not term.isupper():
+            return
+        seen.add(key)
+        terms.append(term)
+
+    for acronym in re.findall(r"\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b", text):
+        add(acronym)
+
+    lowered = text.lower()
+    for phrase in sorted(_DOMAIN_TERMS, key=len, reverse=True):
+        if phrase in lowered:
+            add(phrase.upper() if phrase in {"neet", "neet-ug", "nta", "ugc", "upsc"} else phrase)
+
+    for phrase in ("Supreme Court", "National Testing Agency", "paper leak"):
+        if phrase.lower() in lowered:
+            add(phrase)
+
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{3,}", text)
+    for word in words:
+        key = word.lower().strip("'")
+        if key not in _STOP_WORDS and key not in _SKIP_ENTITIES:
+            add(word)
+        if len(terms) >= limit:
+            break
+
+    return terms[:limit]
+
+
+def build_search_terms(keyword: str = "", keywords: list = None, limit: int = 6) -> list:
+    """Combine extracted entities with article/title terms for external search."""
+    terms = []
+    seen = set()
+
+    def add(term: str):
+        term = sanitize_entity(term)
+        key = term.lower()
+        if not key or key in seen or key in _SKIP_ENTITIES:
+            return
+        if len(key) < 3 and not term.isupper():
+            return
+        seen.add(key)
+        terms.append(term)
+
+    for entity in keywords or []:
+        add(entity)
+
+    for term in extract_search_terms(keyword, limit=limit):
+        add(term)
+
+    def priority(term: str) -> tuple:
+        key = term.lower()
+        if key in {"neet", "neet-ug", "nta", "ugc", "upsc"}:
+            return (0, -len(term))
+        if "paper leak" in key or "medical entrance" in key:
+            return (1, -len(term))
+        if key in _DOMAIN_TERMS or any(anchor in key for anchor in _DOMAIN_TERMS):
+            return (2, -len(term))
+        if re.fullmatch(r"[A-Z][A-Z0-9-]{2,}", term):
+            return (3, -len(term))
+        if "supreme court" in key or "national testing agency" in key:
+            return (4, -len(term))
+        if re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}", term):
+            return (7, -len(term))
+        return (5, -len(term))
+
+    return sorted(terms, key=priority)[:limit]
 
 
 def build_query(named_entities):
     """
-    Build a strict NewsAPI query from LLM-extracted named entities.
-    Every entity is quoted and joined with AND for exact phrase matching.
+    Build a NewsAPI query from named entities.
+    Uses the first entity (should be a PERSON) as the primary term,
+    optionally combined with the second entity via OR.
     """
     if not named_entities:
         return ""
-    clean = [sanitize_entity(e) for e in named_entities[:3] if sanitize_entity(e)]
-    return " AND ".join(f'"{e}"' for e in clean)
+
+    clean = [sanitize_entity(e) for e in named_entities if sanitize_entity(e)]
+    clean = [e for e in clean if e.lower() not in _SKIP_ENTITIES]
+
+    if not clean:
+        return ""
+
+    # Just use the top 1-2 entities with OR — simple and effective
+    top = clean[:2]
+    return " OR ".join(f'"{e}"' for e in top)
+
+
+# Domains and title patterns to exclude — sports, entertainment, lifestyle
+_EXCLUDE_PATTERNS = [
+    r'\bIPL\b', r'\bstadium\b', r'\bpitch report\b', r'\bcricket\b',
+    r'\bscore\b', r'\bmatch\b', r'\bwicket\b', r'\bbatting\b',
+    r'\bBollywood\b', r'\bwedding\b', r'\borgasm\b', r'\bKylie\b',
+    r'\bhippo\b', r'\brecipe\b', r'\bfitness\b', r'\bmarathon\b',
+]
+_EXCLUDE_RE = re.compile('|'.join(_EXCLUDE_PATTERNS), re.IGNORECASE)
 
 
 def is_relevant(article: dict, keywords: list, original_keywords: list = None) -> bool:
     """
-    Requires the article to mention at least one of the top 2 most specific keywords
-    (either sanitized or original form) in its title or description.
-    Uses whole-word matching to avoid 'UGC' matching 'drug' etc.
+    Requires the article to mention at least one of the top 2 most specific keywords.
+    Also excludes sports, entertainment, and lifestyle articles.
     """
     import re
-    if not keywords and not original_keywords:
+    title = article.get("title") or ""
+    desc  = article.get("description") or ""
+    combined = title + " " + desc
+
+    # Exclude sports/entertainment/lifestyle noise
+    if _EXCLUDE_RE.search(combined):
+        return False
+
+    search_terms = build_search_terms("", (keywords or []) + (original_keywords or []), limit=8)
+
+    if not search_terms:
         return True
-    text = (
-        (article.get("title") or "") + " " +
-        (article.get("description") or "")
-    ).lower()
-    # Only check top 2 entities — most specific to the story
-    priority = (keywords or [])[:2] + (original_keywords or [])[:2]
+
+    text = combined.lower()
+    priority = search_terms[:5]
     for keyword in priority:
-        # Check the full keyword phrase first
-        if keyword.lower() in text:
+        key = keyword.lower()
+        if key in text:
             return True
-        # Then check each significant word (5+ chars to avoid noise)
-        for word in keyword.split():
-            if len(word) >= 5 and re.search(rf'\b{re.escape(word.lower())}\b', text):
+        for word in re.findall(r"[A-Za-z0-9-]+", key):
+            if len(word) >= 4 and word not in _STOP_WORDS and re.search(rf'\b{re.escape(word)}\b', text):
                 return True
     return False
 
@@ -80,10 +211,8 @@ def fetch_from_guardian(keywords: list, keyword: str) -> list:
         return []
 
     # Build query from top 2 clean keywords, or fall back to page title keyword
-    if keywords:
-        query = " AND ".join(f'"{e}"' for e in keywords[:2])
-    else:
-        query = keyword
+    terms = build_search_terms(keyword, keywords or [], limit=4)
+    query = " OR ".join(f'"{e}"' for e in terms[:3]) if terms else keyword
 
     try:
         r = requests.get(
@@ -120,32 +249,31 @@ def fetch_from_guardian(keywords: list, keyword: str) -> list:
 
 def get_biased_news(keyword, keywords=None, source_event: str = ""):
     all_articles = []
-    clean_keywords = [sanitize_entity(k) for k in (keywords or []) if sanitize_entity(k)]
+    clean_keywords = build_search_terms(keyword, keywords or [], limit=6)
 
     try:
         base_url = "https://newsapi.org/v2/everything"
         common = {"language": "en", "sortBy": "relevancy", "pageSize": 10, "apiKey": API_KEY}
 
-        # Strategy 1: qInTitle with top 2 entities — most precise
-        if clean_keywords and len(clean_keywords) >= 2:
-            title_query = " AND ".join(f'"{e}"' for e in clean_keywords[:2])
-            r = requests.get(base_url, params={**common, "qInTitle": title_query}, timeout=5).json()
+        # Strategy 1: qInTitle with the first (most specific) entity
+        if clean_keywords:
+            primary = clean_keywords[0]
+            r = requests.get(base_url, params={**common, "qInTitle": f'"{primary}"'}, timeout=5).json()
             all_articles = r.get("articles", [])
-            print(f"qInTitle({title_query}) → {len(all_articles)} articles")
+            print(f"qInTitle({primary!r}) → {len(all_articles)} articles")
 
-        # Strategy 2: q with all entities
+        # Strategy 2: q with OR of top 2 entities
         if not all_articles and clean_keywords:
-            q_query = " AND ".join(f'"{e}"' for e in clean_keywords)
+            q_query = " OR ".join(f'"{e}"' for e in clean_keywords[:3])
             r = requests.get(base_url, params={**common, "q": q_query}, timeout=5).json()
             all_articles = r.get("articles", [])
-            print(f"q({q_query}) → {len(all_articles)} articles")
+            print(f"q OR({q_query}) → {len(all_articles)} articles")
 
-        # Strategy 3: q with just the top entity — broadest NewsAPI fallback
+        # Strategy 3: q with just the first entity — broadest fallback
         if not all_articles and clean_keywords:
-            broad_query = f'"{clean_keywords[0]}"'
-            r = requests.get(base_url, params={**common, "q": broad_query}, timeout=5).json()
+            r = requests.get(base_url, params={**common, "q": f'"{clean_keywords[0]}"'}, timeout=5).json()
             all_articles = r.get("articles", [])
-            print(f"q broad({broad_query}) → {len(all_articles)} articles")
+            print(f"q broad({clean_keywords[0]!r}) → {len(all_articles)} articles")
 
     except Exception as e:
         print(f"NewsAPI error: {e}")
@@ -190,10 +318,6 @@ def process_perspectives(articles: list, keywords: list = None, original_keyword
     if keywords or original_keywords:
         relevant = [a for a in unique_articles if is_relevant(a, keywords or [], original_keywords or [])]
         print(f"{len(relevant)}/{len(unique_articles)} articles passed keyword relevance filter")
-        # If filtering wiped everything (e.g. Guardian articles with loose text), use all unique
-        if not relevant:
-            print("Relevance filter removed all articles — using unfiltered set")
-            relevant = unique_articles
     else:
         relevant = unique_articles
 

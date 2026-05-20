@@ -18,6 +18,16 @@ if _ROOT not in sys.path:
 
 from model import IndicNewsEmbedder, NewsComparatorBrain
 
+# ── spaCy singleton ────────────────────────────────────────────────────────
+_spacy_nlp = None
+
+def _get_spacy():
+    global _spacy_nlp
+    if _spacy_nlp is None:
+        import spacy
+        _spacy_nlp = spacy.load("en_core_web_sm")
+    return _spacy_nlp
+
 # ── Singleton model instances (loaded once at import time) ─────────────────
 _embedder: Optional[IndicNewsEmbedder] = None
 _brain: Optional[NewsComparatorBrain] = None
@@ -82,21 +92,94 @@ def _classify_bias(text: str) -> tuple:
     return best_label, confidence
 
 
+def _clean_text(text: str) -> str:
+    """
+    Strip common web boilerplate patterns before NLP processing.
+    Removes site-name prefixes like "India News The Hindu |", nav fragments, etc.
+    """
+    # Remove leading "Section Name | Site Name" patterns
+    text = re.sub(r'^[^.!?]{0,80}[|\-–]\s*', '', text)
+    # Remove "India News", "World News" type section labels at the start
+    text = re.sub(r'^(?:India|World|Business|Sports|Tech|Politics)\s+News\s+', '', text, flags=re.IGNORECASE)
+    # Remove common byline prefixes before entity extraction.
+    text = re.sub(r'\b(?:By|Author|Written by)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b', '', text)
+    return text.strip()
+
+
 def _extract_entities(text: str) -> list:
     """
-    Lightweight regex-based named-entity extraction.
-    Picks capitalised multi-word phrases (proper nouns) as entity candidates.
+    spaCy-based named entity extraction.
+    Returns PERSON, GPE, ORG, EVENT entities — skips boilerplate fragments.
     """
-    # Match sequences of Title-Case words (2–4 words), skip sentence starts
-    pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b'
-    candidates = re.findall(pattern, text)
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    entities: list[str] = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            entities.append(c)
+    import spacy
+    try:
+        nlp = _get_spacy()
+    except Exception:
+        # Fallback to regex if spaCy unavailable
+        pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b'
+        candidates = re.findall(pattern, text)
+        seen: set = set()
+        entities: list = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                entities.append(c)
+        return entities[:8]
+
+    cleaned = _clean_text(text)
+    doc = nlp(cleaned[:1000])
+
+    KEEP = {"PERSON", "GPE", "ORG", "EVENT"}
+    SKIP = {"india", "china", "us", "uk", "eu", "un", "government",
+            "parliament", "court", "police", "congress", "bjp", "party"}
+    SKIP_FRAGMENTS = {
+        "revisiting", "quarterly digest", "follow us", "read more",
+        "latest news", "supreme court's",
+    }
+
+    # Collect by type
+    by_type: dict = {"PERSON": [], "GPE": [], "ORG": [], "EVENT": []}
+    seen: set = set()
+
+    for ent in doc.ents:
+        name = ent.text.strip()
+        key  = name.lower()
+        dedupe_key = re.sub(r'^(?:the|a|an)\s+', '', key)
+        start = max(0, ent.start_char - 25)
+        prefix = cleaned[start:ent.start_char].lower()
+        if (ent.label_ in KEEP
+                and len(name) > 3
+                and dedupe_key not in seen
+                and key not in SKIP
+                and not any(fragment in key for fragment in SKIP_FRAGMENTS)
+                and not (ent.label_ == "PERSON" and re.search(r'\b(by|author|written by)\s*$', prefix))
+                and not name.isdigit()):
+            seen.add(dedupe_key)
+            by_type[ent.label_].append(name)
+
+    # Acronyms like NEET-UG and NTA are often the strongest topic anchors,
+    # but spaCy may miss them or treat them inconsistently.
+    acronyms = []
+    for match in re.findall(r'\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b', cleaned[:1200]):
+        key = match.lower()
+        if key not in seen and key not in {"html", "http", "https", "ug"}:
+            seen.add(key)
+            acronyms.append(match)
+
+    for phrase in ("Supreme Court", "National Testing Agency", "paper leak"):
+        key = phrase.lower()
+        if key in cleaned.lower() and key not in seen:
+            seen.add(key)
+            acronyms.append(phrase)
+
+    # Build final list: acronyms/topic institutions first, then PERSON/GPE/ORG.
+    entities: list = []
+    entities.extend(acronyms)
+    for label in ("PERSON", "GPE", "ORG"):
+        entities.extend(by_type[label])
+        if len(entities) >= 8:
+            break
+
     return entities[:8]
 
 
@@ -107,8 +190,8 @@ def _make_slug(text: str) -> str:
 
 
 def _summarise(text: str, max_chars: int = 200) -> str:
-    """Returns the first `max_chars` characters as a rough summary."""
-    clean = " ".join(text.split())
+    """Returns the first `max_chars` characters as a rough summary, boilerplate stripped."""
+    clean = " ".join(_clean_text(text).split())
     return clean[:max_chars] + ("…" if len(clean) > max_chars else "")
 
 
