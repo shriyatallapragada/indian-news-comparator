@@ -27,44 +27,82 @@ function fetchJsonWithTimeout(url, options, timeoutMs) {
     .finally(() => clearTimeout(timer));
 }
 
+function isNetworkError(err) {
+  return err && (
+    err.name === "TypeError" ||
+    /failed to fetch|network|load failed/i.test(err.message || "")
+  );
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function wakeBackend(baseUrl) {
+  try {
+    await fetchJsonWithTimeout(`${baseUrl}/healthz`, {}, 15000);
+  } catch (_) {
+    // The real request below will return the useful error if wake-up fails.
+  }
+}
+
+async function fetchJsonWithRetry(baseUrl, path, options, timeoutMs) {
+  const url = `${baseUrl}${path}`;
+  try {
+    return await fetchJsonWithTimeout(url, options, timeoutMs);
+  } catch (err) {
+    if (!isNetworkError(err)) throw err;
+    await wakeBackend(baseUrl);
+    await wait(1500);
+    return fetchJsonWithTimeout(url, options, timeoutMs);
+  }
+}
+
+function publicBackendError(err) {
+  if (isNetworkError(err)) {
+    return "Could not reach the hosted backend. Open https://shriyat-indian-news-comparator.hf.space/healthz in Chrome on this computer, then reload the extension.";
+  }
+  return err.message;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "analyze") {
-    fetchJsonWithTimeout(`${API_BASE}/api/analyze`, {
+    fetchJsonWithRetry(API_BASE, "/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: message.text }),
     }, 45000)
       .then(data => sendResponse({ ok: true, data }))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
+      .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true; // keep channel open for async response
   }
 
   if (message.action === "related") {
-    fetchJsonWithTimeout(`${API_BASE}/api/related`, {
+    fetchJsonWithRetry(API_BASE, "/api/related", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(message.payload),
     }, 12000)
       .then(data => sendResponse({ ok: true, data }))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
+      .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true;
   }
 
   if (message.action === "news") {
-    fetchJsonWithTimeout(`${API_BASE}/news?${message.params}`, {}, 15000)
+    fetchJsonWithRetry(API_BASE, `/news?${message.params}`, {}, 15000)
       .then(data => sendResponse({ ok: true, data }))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
+      .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true;
   }
 
   if (message.action === "perspective") {
-    fetchJsonWithTimeout(`${ENGINE_BASE}/analyze_perspective`, {
+    fetchJsonWithRetry(ENGINE_BASE, "/analyze_perspective", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(message.payload),
     }, 12000)
       .then(data => sendResponse({ ok: true, data }))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
+      .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true;
   }
 });
