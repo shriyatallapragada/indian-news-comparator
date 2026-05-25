@@ -111,10 +111,12 @@ def _get_embedder() -> IndicNewsEmbedder:
 def _get_pipeline() -> FullBiasPipeline:
     global _pipeline
     if _pipeline is None:
-        _pipeline = FullBiasPipeline()
+        candidate = FullBiasPipeline()
         _HEAD_PATH = os.path.join(os.path.dirname(__file__), "..", "train", "bias_classifier.pth")
-        _pipeline.load(_HEAD_PATH)
-        _pipeline.eval()
+        if not candidate.load(_HEAD_PATH):
+            return None
+        candidate.eval()
+        _pipeline = candidate
     return _pipeline
 
 
