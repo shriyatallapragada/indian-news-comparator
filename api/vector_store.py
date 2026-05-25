@@ -35,7 +35,7 @@ _TOPIC_ANCHORS = {
 }
 _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
-    "news", "paper", "party", "probe", "revisiting", "said", "says",
+    "leak", "news", "paper", "party", "probe", "revisiting", "said", "says",
     "supreme", "that", "their", "this", "with", "would",
 }
 
@@ -115,12 +115,28 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: set)
     hits = 0
     anchor_hit = False
 
+    def word_present(word: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_lower))
+
+    def term_matches(term: str) -> bool:
+        stored_hit = term in stored_terms
+        if stored_hit:
+            return True
+        if re.fullmatch(r"[a-z0-9-]{2,}", term):
+            return term not in _STOP_WORDS and word_present(term)
+        if " " in term:
+            if term in candidate_lower:
+                return True
+            words = [
+                word for word in re.findall(r"[a-z0-9-]+", term)
+                if len(word) >= 3 and word not in _STOP_WORDS
+            ]
+            return len(words) >= 2 and all(word_present(word) for word in words)
+        return term in candidate_lower
+
     for term in query_terms:
         term = _normalise_term(term)
-        words = [w for w in re.findall(r"[a-z0-9-]+", term) if len(w) >= 3]
-        direct_hit = term in candidate_lower or term in stored_terms
-        word_hit = any(re.search(rf"\b{re.escape(word)}\b", candidate_lower) for word in words)
-        if direct_hit or word_hit:
+        if term_matches(term):
             hits += 1
             if term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS):
                 anchor_hit = True

@@ -43,7 +43,7 @@ def sanitize_entity(entity: str) -> str:
 _SKIP_ENTITIES = {
     "india", "china", "us", "uk", "eu", "un", "ug", "the", "modi",
     "government", "minister", "parliament", "court", "police",
-    "congress", "bjp", "or", "party", "state", "new", "said",
+    "congress", "bjp", "leak", "or", "party", "state", "new", "said",
     "revisiting supreme court's", "quarterly digest",
 }
 
@@ -53,12 +53,12 @@ _STOP_WORDS = {
     "from", "have", "into", "large", "news", "paper", "revisiting", "said",
     "says", "should", "sources", "supreme", "that", "their", "there",
     "these", "this", "those", "through", "under", "while", "with", "would",
-    "or", "party", "probe",
+    "leak", "or", "party", "probe",
 }
 
 _DOMAIN_TERMS = {
     "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
-    "paper leak", "paper leaks", "leak", "cancellation", "medical entrance",
+    "paper leak", "paper leaks", "cancellation", "medical entrance",
 }
 
 
