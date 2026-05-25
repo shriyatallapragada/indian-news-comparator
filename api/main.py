@@ -10,7 +10,7 @@ load_dotenv()
 
 from nlp.analyzer import analyze_article, analyze_rss_summary
 from vector_store import ingest_article, find_related_by_entities
-from news_fetch import get_biased_news, build_search_terms, is_relevant
+from news_fetch import get_biased_news, build_search_terms, fetch_from_google_news, is_relevant
 import asyncio
 import os
 import requests as http_requests
@@ -21,7 +21,7 @@ _NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY", "")
 
 
 def _fetch_and_ingest(query: str, named_entities: list):
-    """Fetch articles from NewsAPI/Guardian and ingest into ChromaDB."""
+    """Fetch articles from NewsAPI/Guardian/Google News and ingest into ChromaDB."""
     guardian_key = os.environ.get("GUARDIAN_API_KEY", "")
     articles = []
 
@@ -63,16 +63,26 @@ def _fetch_and_ingest(query: str, named_entities: list):
         except Exception as e:
             print(f"[auto-fetch] Guardian error: {e}")
 
-    if not articles:
-        return
-
     search_terms = build_search_terms(query, named_entities, limit=6)
+    if not articles:
+        print("[auto-fetch] No NewsAPI/Guardian articles — trying Google News RSS")
+        articles = fetch_from_google_news(search_terms, query)
+        if not articles:
+            return
+
+    relevant_articles = (
+        [article for article in articles if is_relevant(article, search_terms, named_entities)]
+        if search_terms else articles
+    )
+    if articles and not relevant_articles:
+        print("[auto-fetch] Guardian/NewsAPI yielded no relevant articles — trying Google News RSS")
+        relevant_articles = fetch_from_google_news(search_terms, query)
 
     # Classify and ingest, one per bias
     used_sources = set()
     buckets = {"Left": False, "Center": False, "Right": False}
 
-    for article in articles:
+    for article in relevant_articles:
         text = article.get("description") or article.get("title", "")
         url  = article.get("url", "")
         source = article.get("source", {}).get("name", "Unknown")

@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from dotenv import load_dotenv
 from groq import AsyncGroq
-from news_fetch import build_search_terms, is_relevant
+from news_fetch import build_search_terms, fetch_from_google_news, is_relevant
 from nlp.analyzer import extract_search_query
 
 import requests as http_requests
@@ -512,8 +512,8 @@ Return ONLY a JSON object with exactly two keys: 'reasoning' (1 sentence explain
 
 def _auto_seed(query: str, named_entities: list) -> None:
     """
-    Fetches articles from NewsAPI/Guardian for `query`, classifies their bias,
-    and ingests them directly into ChromaDB — no HTTP round-trip needed.
+    Fetches articles from NewsAPI/Guardian/Google News for `query`, classifies
+    their bias, and ingests them directly into ChromaDB — no HTTP round-trip needed.
     Called in a thread so it doesn't block the async endpoint.
     """
     from nlp.analyzer import analyze_rss_summary
@@ -559,16 +559,27 @@ def _auto_seed(query: str, named_entities: list) -> None:
         except Exception as e:
             print(f"[auto-seed] Guardian error: {e}")
 
-    if not articles:
-        print(f"[auto-seed] No articles found for {query!r}")
-        return
-
     collection  = _get_collection()
     buckets     = {"Left": False, "Center": False, "Right": False}
     used_sources = set()
     search_terms = build_search_terms(query, named_entities, limit=6)
 
-    for article in articles:
+    if not articles:
+        print(f"[auto-seed] No NewsAPI/Guardian articles for {query!r} — trying Google News RSS")
+        articles = fetch_from_google_news(search_terms, query)
+        if not articles:
+            print(f"[auto-seed] No articles found for {query!r}")
+            return
+
+    relevant_articles = (
+        [article for article in articles if is_relevant(article, search_terms, named_entities)]
+        if search_terms else articles
+    )
+    if articles and not relevant_articles:
+        print("[auto-seed] Guardian/NewsAPI yielded no relevant articles — trying Google News RSS")
+        relevant_articles = fetch_from_google_news(search_terms, query)
+
+    for article in relevant_articles:
         text   = article.get("description") or article.get("title", "")
         url    = article.get("url", "")
         source_raw = article.get("source", {})

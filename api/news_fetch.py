@@ -2,6 +2,8 @@ import re
 import requests
 import json
 import os
+import html
+import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
@@ -280,6 +282,56 @@ def fetch_from_guardian(keywords: list, keyword: str) -> list:
         return []
 
 
+def fetch_from_google_news(keywords: list, keyword: str) -> list:
+    """
+    No-key fallback for India-focused coverage via Google News RSS.
+    Results still pass the same relevance filter before classification/ingest.
+    """
+    terms = build_search_terms(keyword, keywords or [], limit=5)
+    query = " ".join(f'"{term}"' if " " in term else term for term in terms[:4]) if terms else keyword
+    if not query:
+        return []
+
+    try:
+        r = requests.get(
+            "https://news.google.com/rss/search",
+            params={
+                "q": query,
+                "hl": "en-IN",
+                "gl": "IN",
+                "ceid": "IN:en",
+            },
+            timeout=6,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        r.raise_for_status()
+        root = ET.fromstring(r.text)
+        articles = []
+        for item in root.findall("./channel/item")[:15]:
+            raw_title = html.unescape(item.findtext("title") or "")
+            raw_desc = html.unescape(item.findtext("description") or "")
+            link = item.findtext("link") or ""
+            source = item.find("source")
+            source_name = source.text if source is not None and source.text else "Google News"
+
+            # Google RSS titles are often "Headline - Publisher"; keep publisher metadata separate.
+            title = re.sub(r"\s+-\s+[^-]+$", "", raw_title).strip() or raw_title
+            description = re.sub(r"<[^>]+>", " ", raw_desc)
+            description = re.sub(r"\s+", " ", description).strip()
+
+            articles.append({
+                "title": title,
+                "description": description,
+                "url": link,
+                "source": {"name": source_name},
+            })
+        print(f"GoogleNews({query}) → {len(articles)} articles")
+        return articles
+    except Exception as e:
+        print(f"Google News RSS error: {e}")
+        return []
+
+
 def get_biased_news(keyword, keywords=None, source_event: str = ""):
     all_articles = []
     clean_keywords = build_search_terms(keyword, keywords or [], limit=6)
@@ -326,7 +378,12 @@ def get_biased_news(keyword, keywords=None, source_event: str = ""):
     if not relevant_from_newsapi:
         print("NewsAPI yielded no relevant articles — trying Guardian API")
         guardian_articles = fetch_from_guardian(clean_keywords, keyword)
-        all_articles = guardian_articles
+        relevant_from_guardian = [a for a in guardian_articles if is_relevant(a, clean_keywords, keywords or [])]
+        if relevant_from_guardian:
+            all_articles = relevant_from_guardian
+        else:
+            print("Guardian yielded no relevant articles — trying Google News RSS")
+            all_articles = fetch_from_google_news(clean_keywords, keyword)
     else:
         all_articles = relevant_from_newsapi
 
