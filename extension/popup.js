@@ -300,6 +300,7 @@ var _engineCache = { Left: null, Center: null, Right: null };
 
 async function fetchPerspectiveData(userText, targetLean) {
   const comparisonList = document.getElementById("comparison-list");
+  const selectedArticle = getSelectedComparisonArticle(targetLean);
 
   // If we already have a result for this tab, just re-render it
   if (_engineCache[targetLean]) {
@@ -314,7 +315,7 @@ async function fetchPerspectiveData(userText, targetLean) {
   try {
     const response = await sendRuntimeMessage({
       action: "perspective",
-      payload: { user_text: userText, target_lean: targetLean },
+      payload: buildPerspectivePayload(userText, targetLean, selectedArticle),
     });
 
     if (!response || !response.ok) {
@@ -332,6 +333,38 @@ async function fetchPerspectiveData(userText, targetLean) {
     console.error("Engine fetch error:", err);
     renderFallbackComparison(targetLean, err.message);
   }
+}
+
+function getSelectedComparisonArticle(targetLean) {
+  if (!_currentNewsData) return null;
+  return _currentNewsData[targetLean.toLowerCase()] || null;
+}
+
+function articleComparisonText(article) {
+  if (!article) return "";
+  const parts = [article.title, article.summary || article.description || article.content]
+    .filter(Boolean);
+  return parts.filter((part, index) => parts.indexOf(part) === index).join(". ");
+}
+
+function articleSourceName(article) {
+  if (!article) return "";
+  if (article.source && typeof article.source === "object") {
+    return article.source.name || "";
+  }
+  return article.source || "";
+}
+
+function buildPerspectivePayload(userText, targetLean, article) {
+  const text = articleComparisonText(article);
+  return {
+    user_text: userText,
+    target_lean: targetLean,
+    alternative_text: text,
+    alternative_source: articleSourceName(article),
+    alternative_url: article && article.url ? article.url : "",
+    allow_live_seed: false,
+  };
 }
 
 function updateUI(data, targetLean) {

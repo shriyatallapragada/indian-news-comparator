@@ -643,8 +643,12 @@ app.add_middleware(
 
 
 class PerspectiveRequest(BaseModel):
-    user_text:   str
-    target_lean: str = "Center"   # "Left" | "Center" | "Right"
+    user_text:          str
+    target_lean:        str = "Center"   # "Left" | "Center" | "Right"
+    alternative_text:   str = ""
+    alternative_source: str = ""
+    alternative_url:    str = ""
+    allow_live_seed:    bool = True
 
 
 class ArticlePayload(BaseModel):
@@ -672,11 +676,20 @@ async def analyze_perspective(req: PerspectiveRequest):
     # 1. Embed the user's article
     user_vector = _to_vector(req.user_text)
 
-    # 2. Find the closest article with the requested bias
-    article = get_perspective(user_vector, req.target_lean, req.user_text)
+    # 2. Prefer the already-vetted article chosen by /api/related or /news.
+    article = None
+    if req.alternative_text.strip():
+        article = {
+            "text": req.alternative_text.strip(),
+            "source": req.alternative_source,
+            "bias_label": req.target_lean,
+            "url": req.alternative_url,
+        }
+    elif req.allow_live_seed:
+        article = get_perspective(user_vector, req.target_lean, req.user_text)
 
     # 3. If no match, auto-seed from live news and retry once
-    if article is None:
+    if article is None and req.allow_live_seed:
         print(f"[engine] No {req.target_lean} match — auto-seeding…")
         query = extract_search_query(req.user_text[:3000])
         if not query:
