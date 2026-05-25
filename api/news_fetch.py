@@ -35,7 +35,12 @@ def sanitize_entity(entity: str) -> str:
     match = re.search(r'\(([A-Z]{2,})\)', entity)
     if match:
         return match.group(1).strip()
-    cleaned = re.sub(r'[()\[\]{}&|!]', '', entity).strip(" '\".,:;")
+    cleaned = re.sub(r"[’']", "'", entity or "")
+    cleaned = re.sub(r"'s\b", "", cleaned)
+    cleaned = re.split(r"\s*[:|]\s*", cleaned, maxsplit=1)[0]
+    if re.search(r"\bcrude\s+oil\b", cleaned, flags=re.IGNORECASE):
+        return "crude oil"
+    cleaned = re.sub(r'[()\[\]{}&|!]', '', cleaned).strip(" '\".,:;")
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"^(?:the|a|an)\s+", "", cleaned, flags=re.IGNORECASE)
     return cleaned
@@ -47,6 +52,8 @@ _SKIP_ENTITIES = {
     "government", "minister", "parliament", "court", "police",
     "congress", "bjp", "leak", "or", "party", "state", "new", "said",
     "revisiting supreme court's", "quarterly digest",
+    "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
+    "signal", "peace",
 }
 
 _STOP_WORDS = {
@@ -56,11 +63,19 @@ _STOP_WORDS = {
     "says", "should", "sources", "supreme", "that", "their", "there",
     "these", "this", "those", "through", "under", "while", "with", "would",
     "leak", "or", "party", "probe",
+    "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
+    "signal", "peace",
 }
 
 _DOMAIN_TERMS = {
     "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
     "paper leak", "paper leaks", "cancellation", "medical entrance",
+    "crude oil", "oil prices", "petrol", "diesel",
+}
+
+_COUNTRY_TERMS = {
+    "iran", "india", "china", "pakistan", "russia", "ukraine", "israel",
+    "palestine", "us", "usa", "united states",
 }
 
 
@@ -115,6 +130,12 @@ def build_search_terms(keyword: str = "", keywords: list = None, limit: int = 6)
         key = term.lower()
         if not key or key in seen or key in _SKIP_ENTITIES:
             return
+        words = [
+            word for word in re.findall(r"[a-z0-9-]+", key)
+            if word not in _STOP_WORDS and word not in _SKIP_ENTITIES
+        ]
+        if " " in key and len(words) < 2 and key not in _DOMAIN_TERMS:
+            return
         if len(key) < 3 and not term.isupper():
             return
         seen.add(key)
@@ -126,8 +147,26 @@ def build_search_terms(keyword: str = "", keywords: list = None, limit: int = 6)
     for term in extract_search_terms(keyword, limit=limit):
         add(term)
 
+    # Remove short duplicate names when a fuller entity is present, e.g.
+    # "Trump" is redundant beside "Donald Trump".
+    terms = [
+        term for term in terms
+        if not (
+            " " not in term
+            and any(term.lower() != other.lower() and term.lower() in other.lower().split() for other in terms)
+        )
+    ]
+
     def priority(term: str) -> tuple:
         key = term.lower()
+        if key == "crude oil":
+            return (0, 0)
+        if key in _COUNTRY_TERMS:
+            return (1, -len(term))
+        if re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}", term):
+            return (2, -len(term))
+        if key in {"oil prices", "petrol", "diesel"}:
+            return (3, -len(term))
         if key in {"neet", "neet-ug", "nta", "ugc", "upsc"}:
             return (0, -len(term))
         if "paper leak" in key or "medical entrance" in key:
@@ -138,8 +177,6 @@ def build_search_terms(keyword: str = "", keywords: list = None, limit: int = 6)
             return (3, -len(term))
         if "supreme court" in key or "national testing agency" in key:
             return (4, -len(term))
-        if re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}", term):
-            return (7, -len(term))
         return (5, -len(term))
 
     return sorted(terms, key=priority)[:limit]
