@@ -98,8 +98,15 @@ def _clean_text(text: str) -> str:
     Strip common web boilerplate patterns before NLP processing.
     Removes site-name prefixes like "India News The Hindu |", nav fragments, etc.
     """
-    # Remove leading "Section Name | Site Name" patterns
-    text = re.sub(r'^[^.!?]{0,80}[|\-–]\s*', '', text)
+    # Remove only short leading section/site labels. Do not treat hyphens inside
+    # words such as "goof-up" as separators.
+    text = re.sub(
+        r'^\s*(?:India|World|Business|Sports|Tech|Politics|Cricket)\s+News\s*(?:\||[-–])\s*',
+        '',
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r'^\s*[A-Z][A-Za-z &]{1,35}\s+\|\s+', '', text)
     # Remove "India News", "World News" type section labels at the start
     text = re.sub(r'^(?:India|World|Business|Sports|Tech|Politics)\s+News\s+', '', text, flags=re.IGNORECASE)
     # Remove common byline prefixes before entity extraction.
@@ -135,7 +142,7 @@ def _extract_entities(text: str) -> list:
             "parliament", "court", "police", "congress", "bjp", "party"}
     SKIP_FRAGMENTS = {
         "revisiting", "quarterly digest", "follow us", "read more",
-        "latest news", "supreme court's",
+        "latest news", "supreme court's", "cricket news", "summary",
     }
 
     # Collect by type
@@ -161,9 +168,23 @@ def _extract_entities(text: str) -> list:
     # Acronyms like NEET-UG and NTA are often the strongest topic anchors,
     # but spaCy may miss them or treat them inconsistently.
     acronyms = []
+    ACRONYM_SKIP = {
+        "AGAIN", "ANI", "HTML", "HTTP", "HTTPS", "LIVE", "NEWS", "READ", "THE",
+        "TOI", "WATCH",
+    }
+    SHORT_ACRONYM_ALLOW = {
+        "AI", "ED", "EC", "SC", "CBI", "NIA", "NDA", "UPA", "NEET", "NTA",
+        "UPSC", "IPL", "T20", "ODI", "BCCI",
+    }
+
     for match in re.findall(r'\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b', cleaned[:1200]):
         key = match.lower()
-        if key not in seen and key not in {"html", "http", "https", "ug"}:
+        if (
+            key not in seen
+            and match not in ACRONYM_SKIP
+            and (len(match) >= 3 or match in SHORT_ACRONYM_ALLOW)
+            and key not in {"ug"}
+        ):
             seen.add(key)
             acronyms.append(match)
 
@@ -173,13 +194,18 @@ def _extract_entities(text: str) -> list:
             seen.add(key)
             acronyms.append(phrase)
 
-    # Build final list: acronyms/topic institutions first, then PERSON/GPE/ORG.
+    # Build final list with human-readable names first for display, while still
+    # keeping useful acronyms available as topic anchors.
     entities: list = []
-    entities.extend(acronyms)
     for label in ("PERSON", "GPE", "ORG"):
         entities.extend(by_type[label])
         if len(entities) >= 8:
             break
+    generic_sports_terms = {"CSK", "MI", "IPL", "T20", "ODI"}
+    for acronym in acronyms:
+        if by_type["PERSON"] and acronym in generic_sports_terms:
+            continue
+        entities.append(acronym)
 
     return entities[:8]
 
@@ -193,6 +219,10 @@ def _make_slug(text: str) -> str:
 def _summarise(text: str, max_chars: int = 200) -> str:
     """Returns the first `max_chars` characters as a rough summary, boilerplate stripped."""
     clean = " ".join(_clean_text(text).split())
+    if re.search(r'\bSummary:\s*', clean, flags=re.IGNORECASE):
+        clean = re.split(r'\bSummary:\s*', clean, maxsplit=1, flags=re.IGNORECASE)[-1].strip()
+    clean = re.sub(r'^[a-z]{1,12}:\s+', '', clean)
+    clean = re.sub(r'^\|\s*[A-Za-z ]{2,40}\s+', '', clean)
     return clean[:max_chars] + ("…" if len(clean) > max_chars else "")
 
 
