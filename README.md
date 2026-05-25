@@ -1,3 +1,11 @@
+---
+title: Indian News Comparator
+emoji: 📰
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
 # Indian News Comparator
 
 A Chrome extension that analyses the political bias of any Indian news article you are reading, finds alternative perspectives from Left, Center, and Right sources, and explains the framing differences using a custom-trained ML model and an LLM.
