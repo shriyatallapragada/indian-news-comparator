@@ -52,7 +52,7 @@ from model.bias_classifier import FullBiasPipeline
 def _ensure_nltk_resource(resource: str, download_name: str) -> None:
     try:
         nltk.data.find(resource)
-    except LookupError:
+    except (LookupError, OSError):
         try:
             nltk.download(download_name, quiet=True)
         except Exception as exc:
@@ -60,7 +60,6 @@ def _ensure_nltk_resource(resource: str, download_name: str) -> None:
 
 
 _ensure_nltk_resource("tokenizers/punkt", "punkt")
-_ensure_nltk_resource("tokenizers/punkt_tab", "punkt_tab")
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 _DEFAULT_DB_PATH = "/tmp/chroma" if os.environ.get("SPACE_ID") else os.path.join(os.path.dirname(__file__), "chroma_db")

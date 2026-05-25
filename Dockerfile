@@ -31,7 +31,7 @@ RUN python -m pip install --no-cache-dir \
     https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 RUN mkdir -p /home/user/nltk_data \
-    && python -c "import nltk; nltk.download('punkt', download_dir='/home/user/nltk_data', quiet=True); nltk.download('punkt_tab', download_dir='/home/user/nltk_data', quiet=True)"
+    && python -c "import nltk; nltk.download('punkt', download_dir='/home/user/nltk_data', quiet=True)"
 
 COPY --chown=user:user . /app
 
