@@ -4,9 +4,12 @@ import json
 import os
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
 from nlp.analyzer import analyze_rss_summary
 
-API_KEY = "5856049a571545c9b02e5d355651f250"
+load_dotenv()
+
+API_KEY = os.environ.get("NEWSAPI_KEY", "")
 GUARDIAN_API_KEY = os.environ.get("GUARDIAN_API_KEY", "")
 
 
@@ -251,32 +254,35 @@ def get_biased_news(keyword, keywords=None, source_event: str = ""):
     all_articles = []
     clean_keywords = build_search_terms(keyword, keywords or [], limit=6)
 
-    try:
-        base_url = "https://newsapi.org/v2/everything"
-        common = {"language": "en", "sortBy": "relevancy", "pageSize": 10, "apiKey": API_KEY}
+    if API_KEY:
+        try:
+            base_url = "https://newsapi.org/v2/everything"
+            common = {"language": "en", "sortBy": "relevancy", "pageSize": 10, "apiKey": API_KEY}
 
-        # Strategy 1: qInTitle with the first (most specific) entity
-        if clean_keywords:
-            primary = clean_keywords[0]
-            r = requests.get(base_url, params={**common, "qInTitle": f'"{primary}"'}, timeout=5).json()
-            all_articles = r.get("articles", [])
-            print(f"qInTitle({primary!r}) → {len(all_articles)} articles")
+            # Strategy 1: qInTitle with the first (most specific) entity
+            if clean_keywords:
+                primary = clean_keywords[0]
+                r = requests.get(base_url, params={**common, "qInTitle": f'"{primary}"'}, timeout=5).json()
+                all_articles = r.get("articles", [])
+                print(f"qInTitle({primary!r}) → {len(all_articles)} articles")
 
-        # Strategy 2: q with OR of top 2 entities
-        if not all_articles and clean_keywords:
-            q_query = " OR ".join(f'"{e}"' for e in clean_keywords[:3])
-            r = requests.get(base_url, params={**common, "q": q_query}, timeout=5).json()
-            all_articles = r.get("articles", [])
-            print(f"q OR({q_query}) → {len(all_articles)} articles")
+            # Strategy 2: q with OR of top 2 entities
+            if not all_articles and clean_keywords:
+                q_query = " OR ".join(f'"{e}"' for e in clean_keywords[:3])
+                r = requests.get(base_url, params={**common, "q": q_query}, timeout=5).json()
+                all_articles = r.get("articles", [])
+                print(f"q OR({q_query}) → {len(all_articles)} articles")
 
-        # Strategy 3: q with just the first entity — broadest fallback
-        if not all_articles and clean_keywords:
-            r = requests.get(base_url, params={**common, "q": f'"{clean_keywords[0]}"'}, timeout=5).json()
-            all_articles = r.get("articles", [])
-            print(f"q broad({clean_keywords[0]!r}) → {len(all_articles)} articles")
+            # Strategy 3: q with just the first entity — broadest fallback
+            if not all_articles and clean_keywords:
+                r = requests.get(base_url, params={**common, "q": f'"{clean_keywords[0]}"'}, timeout=5).json()
+                all_articles = r.get("articles", [])
+                print(f"q broad({clean_keywords[0]!r}) → {len(all_articles)} articles")
 
-    except Exception as e:
-        print(f"NewsAPI error: {e}")
+        except Exception as e:
+            print(f"NewsAPI error: {e}")
+    else:
+        print("NEWSAPI_KEY not set, skipping NewsAPI")
 
     # Filter relevance now so we know if NewsAPI actually gave us usable articles
     relevant_from_newsapi = (

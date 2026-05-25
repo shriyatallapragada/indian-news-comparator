@@ -1,0 +1,10 @@
+.env
+.git
+.venv
+__pycache__/
+*.py[cod]
+.DS_Store
+chroma/
+chroma_db/
+api/chroma_db/
+*.log

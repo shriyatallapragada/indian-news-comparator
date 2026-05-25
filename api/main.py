@@ -12,31 +12,34 @@ from nlp.analyzer import analyze_article, analyze_rss_summary
 from vector_store import ingest_article, find_related_by_entities
 from news_fetch import get_biased_news, build_search_terms, is_relevant
 import asyncio
+import os
 import requests as http_requests
 from concurrent.futures import ThreadPoolExecutor
 
 _thread_pool = ThreadPoolExecutor(max_workers=3)
-_NEWSAPI_KEY = "5856049a571545c9b02e5d355651f250"
+_NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY", "")
 
 
 def _fetch_and_ingest(query: str, named_entities: list):
     """Fetch articles from NewsAPI/Guardian and ingest into ChromaDB."""
-    import os
     guardian_key = os.environ.get("GUARDIAN_API_KEY", "")
     articles = []
 
     # Try NewsAPI with broad query first
-    try:
-        r = http_requests.get(
-            "https://newsapi.org/v2/everything",
-            params={"q": query, "language": "en", "sortBy": "relevancy",
-                    "pageSize": 15, "apiKey": _NEWSAPI_KEY},
-            timeout=8,
-        ).json()
-        articles = r.get("articles", [])
-        print(f"[auto-fetch] NewsAPI({query!r}) → {len(articles)} articles")
-    except Exception as e:
-        print(f"[auto-fetch] NewsAPI error: {e}")
+    if _NEWSAPI_KEY:
+        try:
+            r = http_requests.get(
+                "https://newsapi.org/v2/everything",
+                params={"q": query, "language": "en", "sortBy": "relevancy",
+                        "pageSize": 15, "apiKey": _NEWSAPI_KEY},
+                timeout=8,
+            ).json()
+            articles = r.get("articles", [])
+            print(f"[auto-fetch] NewsAPI({query!r}) → {len(articles)} articles")
+        except Exception as e:
+            print(f"[auto-fetch] NewsAPI error: {e}")
+    else:
+        print("[auto-fetch] NEWSAPI_KEY not set, skipping NewsAPI")
 
     # Guardian fallback
     if not articles and guardian_key:

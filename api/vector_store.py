@@ -24,7 +24,8 @@ _embedder: Optional[IndicNewsEmbedder] = None
 _chroma_client: Optional[chromadb.PersistentClient] = None
 _collection = None
 
-_DB_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
+_DEFAULT_DB_PATH = "/tmp/chroma" if os.environ.get("SPACE_ID") else os.path.join(os.path.dirname(__file__), "chroma_db")
+_DB_PATH = os.environ.get("CHROMA_DB_PATH", _DEFAULT_DB_PATH)
 _COLLECTION_NAME = "news_articles"
 _TIME_WINDOW_HOURS = 48
 _MIN_SIMILARITY = 0.72  # below this score, treat as no match
@@ -50,6 +51,7 @@ def _get_embedder() -> IndicNewsEmbedder:
 def _get_collection():
     global _chroma_client, _collection
     if _collection is None:
+        os.makedirs(_DB_PATH, exist_ok=True)
         _chroma_client = chromadb.PersistentClient(path=_DB_PATH)
         _collection = _chroma_client.get_or_create_collection(
             name=_COLLECTION_NAME,

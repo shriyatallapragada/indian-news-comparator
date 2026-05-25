@@ -1,8 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 python-dotenv==1.0.1
-torch>=2.3.0
+torch==2.3.1+cpu; platform_system == "Linux"
+torch>=2.3.0; platform_system != "Linux"
 transformers==4.41.1
 sentencepiece==0.2.0
 ncps

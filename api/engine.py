@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 load_dotenv()
 
 _thread_pool = ThreadPoolExecutor(max_workers=3)
-_NEWSAPI_KEY  = "5856049a571545c9b02e5d355651f250"
+_NEWSAPI_KEY  = os.environ.get("NEWSAPI_KEY", "")
 
 # ── spaCy model (loaded once) ──────────────────────────────────────────────
 _nlp = spacy.load("en_core_web_sm")
@@ -63,7 +63,8 @@ _ensure_nltk_resource("tokenizers/punkt", "punkt")
 _ensure_nltk_resource("tokenizers/punkt_tab", "punkt_tab")
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-_DB_PATH  = os.path.join(os.path.dirname(__file__), "chroma_db")
+_DEFAULT_DB_PATH = "/tmp/chroma" if os.environ.get("SPACE_ID") else os.path.join(os.path.dirname(__file__), "chroma_db")
+_DB_PATH  = os.environ.get("CHROMA_DB_PATH", _DEFAULT_DB_PATH)
 _CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "mock_database.csv")
 _COLLECTION = "news_articles"  # shared with vector_store.py
 
@@ -120,6 +121,7 @@ def _get_pipeline() -> FullBiasPipeline:
 def _get_collection():
     global _collection
     if _collection is None:
+        os.makedirs(_DB_PATH, exist_ok=True)
         client = chromadb.PersistentClient(path=_DB_PATH)
         _collection = client.get_or_create_collection(
             name=_COLLECTION,
@@ -507,17 +509,20 @@ def _auto_seed(query: str, named_entities: list) -> None:
     articles = []
 
     # Try NewsAPI first
-    try:
-        r = http_requests.get(
-            "https://newsapi.org/v2/everything",
-            params={"q": query, "language": "en", "sortBy": "relevancy",
-                    "pageSize": 15, "apiKey": _NEWSAPI_KEY},
-            timeout=8,
-        ).json()
-        articles = r.get("articles", [])
-        print(f"[auto-seed] NewsAPI({query!r}) → {len(articles)} articles")
-    except Exception as e:
-        print(f"[auto-seed] NewsAPI error: {e}")
+    if _NEWSAPI_KEY:
+        try:
+            r = http_requests.get(
+                "https://newsapi.org/v2/everything",
+                params={"q": query, "language": "en", "sortBy": "relevancy",
+                        "pageSize": 15, "apiKey": _NEWSAPI_KEY},
+                timeout=8,
+            ).json()
+            articles = r.get("articles", [])
+            print(f"[auto-seed] NewsAPI({query!r}) → {len(articles)} articles")
+        except Exception as e:
+            print(f"[auto-seed] NewsAPI error: {e}")
+    else:
+        print("[auto-seed] NEWSAPI_KEY not set, skipping NewsAPI")
 
     # Guardian fallback
     if not articles and guardian_key:
@@ -719,6 +724,7 @@ async def ingest_live_batch(articles: List[ArticlePayload]):
         documents.append(article.text)
         metadatas.append({
             "source":     article.source,
+            "bias":       article.bias_label,
             "bias_label": article.bias_label,
             "url":        article.url,
             "topic":      article.topic,

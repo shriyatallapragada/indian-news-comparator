@@ -145,6 +145,7 @@ cp .env.example .env
 Edit `.env` and fill in your keys:
 
 ```
+NEWSAPI_KEY=your_newsapi_key_here
 GUARDIAN_API_KEY=your_guardian_api_key_here
 GROQ_API_KEY=your_groq_api_key_here
 ```

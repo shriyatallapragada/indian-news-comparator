@@ -1,8 +1,14 @@
 // background.js — service worker handles all fetch calls (stable context in MV3)
 
-// ── Backend URLs — update these when deploying ─────────────────────────────
-const API_BASE    = "http://127.0.0.1:8000";  // main.py  (port 8000)
-const ENGINE_BASE = "http://127.0.0.1:8001";  // engine.py (port 8001)
+// ── Backend URLs ──────────────────────────────────────────────────────────
+// For Hugging Face Spaces, replace the placeholder with:
+// https://[username]-[spacename].hf.space
+const HF_SPACE_BASE = "https://[username]-[spacename].hf.space";
+const USE_HF_SPACE = !HF_SPACE_BASE.includes("[username]");
+
+// Hugging Face exposes one port, so both route groups live under the same base.
+const API_BASE = USE_HF_SPACE ? HF_SPACE_BASE : "http://127.0.0.1:8000";
+const ENGINE_BASE = USE_HF_SPACE ? HF_SPACE_BASE : "http://127.0.0.1:8001";
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "analyze") {

@@ -20,12 +20,15 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from nlp.analyzer import analyze_rss_summary
 
-NEWSAPI_KEY     = "5856049a571545c9b02e5d355651f250"
+NEWSAPI_KEY     = os.environ.get("NEWSAPI_KEY", "")
 GUARDIAN_KEY    = os.environ.get("GUARDIAN_API_KEY", "")
-ENGINE_URL      = "http://127.0.0.1:8001/api/ingest_live_batch"
+ENGINE_URL      = os.environ.get("ENGINE_URL", "http://127.0.0.1:8001/api/ingest_live_batch")
 
 
 def fetch_newsapi(topic: str) -> list:
+    if not NEWSAPI_KEY:
+        print("NEWSAPI_KEY not set, skipping NewsAPI")
+        return []
     try:
         r = requests.get(
             "https://newsapi.org/v2/everything",
