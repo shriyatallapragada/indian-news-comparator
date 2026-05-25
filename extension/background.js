@@ -3,7 +3,7 @@
 // ── Backend URLs ──────────────────────────────────────────────────────────
 // For Hugging Face Spaces, replace the placeholder with:
 // https://[username]-[spacename].hf.space
-const HF_SPACE_BASE = "https://[username]-[spacename].hf.space";
+const HF_SPACE_BASE = "https://shriyat-indian-news-comparator.hf.space";
 const USE_HF_SPACE = !HF_SPACE_BASE.includes("[username]");
 
 // Hugging Face exposes one port, so both route groups live under the same base.

@@ -295,39 +295,6 @@ function buildArticleLinkCard(article) {
   </div>`;
 }
 
-// ── Cross-Article Comparison Generation ────────────────────────────────────
-function buildLeavesOutPoints(bias, left, center, right) {
-  let points = [];
-  const leftText = getArticleSnippet(left);
-  const centerText = getArticleSnippet(center);
-  const rightText = getArticleSnippet(right);
-
-  if (!leftText && !centerText && !rightText) {
-    return "";
-  }
-
-  if (bias === "left" && rightText) {
-    points.push(`Right-leaning sources focus on: ${rightText.substring(0, 80)}...`);
-  } else if (bias === "right" && leftText) {
-    points.push(`Left-leaning sources focus on: ${leftText.substring(0, 80)}...`);
-  } else if (leftText || rightText) {
-    points.push(`Other ideological sides may re-frame this core event emphasizing different socio-economic impacts.`);
-  }
-
-  if (centerText) {
-    points.push(`Neutral reporting adds context regarding: ${centerText.substring(0, 80)}...`);
-  } else if (leftText || rightText) {
-    points.push(`A broader look at related topics suggests missing factual context or alternative policy proposals.`);
-  }
-  
-  return points.map(p => `<li>${escHtml(p)}</li>`).join("");
-}
-
-function getArticleSnippet(article) {
-  if (!article) return "";
-  return article.summary || article.description || article.title || "";
-}
-
 // Cache engine results per tab so switching doesn't re-fetch
 var _engineCache = { Left: null, Center: null, Right: null };
 
@@ -412,21 +379,9 @@ function renderFallbackComparison(targetLean, errorMessage) {
   const listEl = document.getElementById("comparison-list");
   if (!listEl) return;
 
-  const news = _currentNewsData || {};
-  const bias = ((_currentBiasData && _currentBiasData.bias_classification) || "center").toLowerCase();
-  const left = news.left || null;
-  const center = news.center || null;
-  const right = news.right || null;
-  const fallbackHtml = buildLeavesOutPoints(bias, left, center, right);
-
-  if (fallbackHtml) {
-    listEl.innerHTML = fallbackHtml;
-    return;
-  }
-
   const suffix = errorMessage ? " (" + errorMessage + ")" : "";
   listEl.innerHTML = '<li style="color:#9aa0a6;">No closely related ' +
-    escHtml(targetLean) + '-leaning article found for comparison' +
+    escHtml(targetLean) + '-leaning article found for this topic' +
     escHtml(suffix) + '.</li>';
 }
 
