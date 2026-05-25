@@ -136,6 +136,7 @@ class RelatedRequest(BaseModel):
     summary: str
     named_entities: list[str] = []
     published_at: str = ""
+    allow_live_fetch: bool = False
 
 
 # ── Bias analysis for the current article the user is reading ──────────────
@@ -190,7 +191,7 @@ async def related(request: RelatedRequest):
     # Auto-fetch if any perspective is missing or has low entity overlap
     missing_leans = [k for k in ["left", "center", "right"] if result.get(k) is None]
     
-    if missing_leans and request.summary:
+    if request.allow_live_fetch and missing_leans and request.summary:
         # Use stable topic terms rather than noisy bylines/title fragments.
         terms = build_search_terms(request.summary, request.named_entities, limit=5)
         query = " OR ".join(f'"{term}"' for term in terms[:3]) if terms else request.summary[:80].strip()

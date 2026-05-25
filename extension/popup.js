@@ -131,7 +131,12 @@ function getNews() {
             setLoading("Finding related perspectives…");
             chrome.runtime.sendMessage({
               action: "related",
-              payload: { summary: summary, named_entities: entities, published_at: "" }
+              payload: {
+                summary: summary,
+                named_entities: entities,
+                published_at: "",
+                allow_live_fetch: false
+              }
             }, function (relRes) {
               const vectorResults = relRes && relRes.ok ? relRes.data : null;
               const hasVector = vectorResults && (vectorResults.left || vectorResults.center || vectorResults.right);
@@ -301,6 +306,11 @@ var _engineCache = { Left: null, Center: null, Right: null };
 async function fetchPerspectiveData(userText, targetLean) {
   const comparisonList = document.getElementById("comparison-list");
   const selectedArticle = getSelectedComparisonArticle(targetLean);
+
+  if (!selectedArticle) {
+    renderFallbackComparison(targetLean);
+    return;
+  }
 
   // If we already have a result for this tab, just re-render it
   if (_engineCache[targetLean]) {
