@@ -111,27 +111,31 @@ def _extract_topic_terms(text: str, named_entities: list = None) -> list:
 
 
 def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: set) -> tuple[int, bool]:
-    candidate_lower = (candidate_text or "").lower()
+    candidate_text = candidate_text or ""
+    candidate_lower = candidate_text.lower()
     hits = 0
     anchor_hit = False
 
     def word_present(word: str) -> bool:
-        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_lower))
+        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_text))
+
+    def phrase_present(phrase: str) -> bool:
+        return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", candidate_text, re.IGNORECASE))
 
     def term_matches(term: str) -> bool:
         stored_hit = term in stored_terms
         if stored_hit:
             return True
-        if re.fullmatch(r"[a-z0-9-]{2,}", term):
-            return term not in _STOP_WORDS and word_present(term)
         if " " in term:
-            if term in candidate_lower:
+            if phrase_present(term):
                 return True
             words = [
                 word for word in re.findall(r"[a-z0-9-]+", term)
                 if len(word) >= 3 and word not in _STOP_WORDS
             ]
             return len(words) >= 2 and all(word_present(word) for word in words)
+        if re.fullmatch(r"[a-z0-9-]{2,}", term):
+            return term not in _STOP_WORDS and word_present(term.upper())
         return term in candidate_lower
 
     for term in query_terms:

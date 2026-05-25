@@ -194,11 +194,14 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
     if not search_terms:
         return True
 
-    text = combined.lower()
+    text_lower = combined.lower()
     priority = search_terms[:6]
 
     def word_present(word: str) -> bool:
-        return bool(re.search(rf'\b{re.escape(word)}\b', text))
+        return bool(re.search(rf'\b{re.escape(word)}\b', combined))
+
+    def phrase_present(phrase: str) -> bool:
+        return bool(re.search(rf'(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])', combined, re.IGNORECASE))
 
     def significant_words(term: str) -> list:
         return [
@@ -213,11 +216,11 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
 
         # Acronyms and short institutional tags must match as whole tokens.
         if re.fullmatch(r"[A-Z][A-Z0-9-]{1,}", term):
-            return word_present(key)
+            return word_present(term)
 
         # Multi-word topics should not be reduced to generic words like "party".
         if " " in key:
-            if key in text:
+            if phrase_present(term):
                 return True
             words = significant_words(key)
             return len(words) >= 2 and all(word_present(word) for word in words)
@@ -225,13 +228,17 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
         if key in _DOMAIN_TERMS:
             return word_present(key)
 
-        if key in text and word_present(key):
+        if key in text_lower and word_present(key):
             return True
         return False
 
+    needed_matches = 2 if len(priority) >= 3 else 1
+    matches = 0
     for keyword in priority:
         if term_matches(keyword):
-            return True
+            matches += 1
+            if matches >= needed_matches:
+                return True
     return False
 
 
