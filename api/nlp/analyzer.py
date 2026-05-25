@@ -3,6 +3,7 @@ analyzer.py — bridges the model (IndicBERT + LiquidBrain) with the API.
 
 analyze_article()     → full bias analysis for the article the user is reading
 analyze_rss_summary() → lightweight tagging for RSS/ingested articles
+extract_search_query() → LLM-powered 2-3 word NewsAPI search query
 """
 
 import sys
@@ -206,6 +207,7 @@ def analyze_article(text: str) -> dict:
     entities = _extract_entities(text)
     summary = _summarise(text)
     slug = _make_slug(text)
+    search_query = extract_search_query(text)
 
     return {
         "bias_classification": bias_label,
@@ -213,6 +215,7 @@ def analyze_article(text: str) -> dict:
         "named_entities": entities,
         "article_summary": summary,
         "core_event_slug": slug,
+        "search_query": search_query,
         "step_1_target_analysis": (
             f"Entities detected: {', '.join(entities)}" if entities
             else "No prominent named entities detected."
@@ -238,3 +241,73 @@ def analyze_rss_summary(summary: str) -> dict:
         "named_entities": entities,
         "core_event_slug": slug,
     }
+
+
+def extract_search_query(text: str) -> str:
+    """
+    Uses Groq LLM to extract a precise 2-4 word NewsAPI search query
+    from the article text. Falls back to top spaCy entities if LLM fails.
+
+    Example: "CBI probe Supreme Court Cockroach Janta Party fake advocates"
+    → returns: "Supreme Court CBI Cockroach Janta Party"
+    """
+    import os
+    from groq import Groq
+
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    if not api_key:
+        entities = _extract_entities(text)
+        return " ".join(entities[:2]) if entities else text[:60]
+
+    prompt = (
+        "Extract the best short search query for finding related news about this article. "
+        "Return only 2-4 words or a short phrase, without punctuation or explanation. "
+        "Prefer Indian political terminology when relevant.\n\n"
+        f"Article:\n{text[:1800].strip()}"
+    )
+
+    try:
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=20,
+        )
+        query = response.choices[0].message.content.strip()
+        query = re.sub(r'^["\']+|["\']+$', '', query).strip()
+        query = re.sub(r"\s+", " ", query)
+        if query:
+            return query
+    except Exception as e:
+        print(f"[analyzer] Groq search query extraction failed: {e}")
+
+    entities = _extract_entities(text)
+    return " ".join(entities[:2]) if entities else text[:60]
+
+    try:
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Extract the single most searchable 2-4 word phrase from this Indian news article "
+                    "that would find related articles on NewsAPI. Return ONLY the search phrase, nothing else.\n\n"
+                    f"Article: {text[:400]}"
+                )
+            }],
+            temperature=0.0,
+            max_tokens=20,
+        )
+        query = response.choices[0].message.content.strip().strip('"').strip("'")
+        # Sanity check — must be short and not a sentence
+        if query and len(query) < 60 and "\n" not in query:
+            print(f"[analyzer] LLM search query: {query!r}")
+            return query
+    except Exception as e:
+        print(f"[analyzer] LLM query extraction failed: {e}")
+
+    # Fallback to spaCy entities
+    entities = _extract_entities(text)
+    return " ".join(entities[:2]) if entities else text[:60]

@@ -28,6 +28,7 @@ from typing import Optional, List
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from news_fetch import build_search_terms, is_relevant
+from nlp.analyzer import extract_search_query
 
 import requests as http_requests
 from concurrent.futures import ThreadPoolExecutor
@@ -653,12 +654,14 @@ async def analyze_perspective(req: PerspectiveRequest):
     # 3. If no match, auto-seed from live news and retry once
     if article is None:
         print(f"[engine] No {req.target_lean} match — auto-seeding…")
-        query_terms = build_search_terms(req.user_text[:1000], [], limit=5)
-        query = " OR ".join(f'"{term}"' for term in query_terms[:3]) if query_terms else req.user_text[:80].strip()
+        query = extract_search_query(req.user_text[:3000])
+        if not query:
+            query_terms = build_search_terms(req.user_text[:1000], [], limit=5)
+            query = " OR ".join(f'"{term}"' for term in query_terms[:3]) if query_terms else req.user_text[:80].strip()
 
         print(f"[engine] Auto-seed query: {query!r}")
         loop  = asyncio.get_event_loop()
-        await loop.run_in_executor(_thread_pool, _auto_seed, query, query_terms)
+        await loop.run_in_executor(_thread_pool, _auto_seed, query, [])
         article = get_perspective(user_vector, req.target_lean, req.user_text)
 
     if article is None:
