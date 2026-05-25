@@ -35,8 +35,8 @@ _TOPIC_ANCHORS = {
 }
 _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
-    "news", "paper", "revisiting", "said", "says", "supreme", "that",
-    "their", "this", "with", "would",
+    "news", "paper", "party", "probe", "revisiting", "said", "says",
+    "supreme", "that", "their", "this", "with", "would",
 }
 
 

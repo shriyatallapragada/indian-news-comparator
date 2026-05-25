@@ -43,7 +43,7 @@ def sanitize_entity(entity: str) -> str:
 _SKIP_ENTITIES = {
     "india", "china", "us", "uk", "eu", "un", "ug", "the", "modi",
     "government", "minister", "parliament", "court", "police",
-    "congress", "bjp", "party", "state", "new", "said",
+    "congress", "bjp", "or", "party", "state", "new", "said",
     "revisiting supreme court's", "quarterly digest",
 }
 
@@ -53,6 +53,7 @@ _STOP_WORDS = {
     "from", "have", "into", "large", "news", "paper", "revisiting", "said",
     "says", "should", "sources", "supreme", "that", "their", "there",
     "these", "this", "those", "through", "under", "while", "with", "would",
+    "or", "party", "probe",
 }
 
 _DOMAIN_TERMS = {
@@ -174,7 +175,7 @@ _EXCLUDE_RE = re.compile('|'.join(_EXCLUDE_PATTERNS), re.IGNORECASE)
 
 def is_relevant(article: dict, keywords: list, original_keywords: list = None) -> bool:
     """
-    Requires the article to mention at least one of the top 2 most specific keywords.
+    Requires the article to mention a real topic term from the source article.
     Also excludes sports, entertainment, and lifestyle articles.
     """
     import re
@@ -192,14 +193,43 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
         return True
 
     text = combined.lower()
-    priority = search_terms[:5]
-    for keyword in priority:
-        key = keyword.lower()
-        if key in text:
-            return True
-        for word in re.findall(r"[A-Za-z0-9-]+", key):
-            if len(word) >= 4 and word not in _STOP_WORDS and re.search(rf'\b{re.escape(word)}\b', text):
+    priority = search_terms[:6]
+
+    def word_present(word: str) -> bool:
+        return bool(re.search(rf'\b{re.escape(word)}\b', text))
+
+    def significant_words(term: str) -> list:
+        return [
+            word for word in re.findall(r"[a-z0-9-]+", term.lower())
+            if len(word) >= 4 and word not in _STOP_WORDS and word not in _SKIP_ENTITIES
+        ]
+
+    def term_matches(term: str) -> bool:
+        key = term.lower().strip()
+        if not key or key in _STOP_WORDS or key in _SKIP_ENTITIES:
+            return False
+
+        # Acronyms and short institutional tags must match as whole tokens.
+        if re.fullmatch(r"[A-Z][A-Z0-9-]{1,}", term):
+            return word_present(key)
+
+        # Multi-word topics should not be reduced to generic words like "party".
+        if " " in key:
+            if key in text:
                 return True
+            words = significant_words(key)
+            return len(words) >= 2 and all(word_present(word) for word in words)
+
+        if key in _DOMAIN_TERMS:
+            return word_present(key)
+
+        if key in text and word_present(key):
+            return True
+        return False
+
+    for keyword in priority:
+        if term_matches(keyword):
+            return True
     return False
 
 

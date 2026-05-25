@@ -96,8 +96,8 @@ _TOPIC_ANCHORS = {
 }
 _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
-    "news", "paper", "revisiting", "said", "says", "supreme", "that",
-    "their", "this", "with", "would",
+    "news", "paper", "party", "probe", "revisiting", "said", "says",
+    "supreme", "that", "their", "this", "with", "would",
 }
 
 
@@ -661,7 +661,8 @@ async def analyze_perspective(req: PerspectiveRequest):
 
         print(f"[engine] Auto-seed query: {query!r}")
         loop  = asyncio.get_event_loop()
-        await loop.run_in_executor(_thread_pool, _auto_seed, query, [])
+        seed_terms = build_search_terms(req.user_text[:1000], [], limit=6)
+        await loop.run_in_executor(_thread_pool, _auto_seed, query, seed_terms)
         article = get_perspective(user_vector, req.target_lean, req.user_text)
 
     if article is None:
