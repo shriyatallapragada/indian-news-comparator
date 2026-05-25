@@ -29,6 +29,7 @@ Add these as Hugging Face Space secrets:
 NEWSAPI_KEY=...
 GUARDIAN_API_KEY=...
 GROQ_API_KEY=...
+HF_TOKEN=...
 ```
 
 The Docker image sets:
@@ -40,6 +41,14 @@ CHROMA_DB_PATH=/tmp/chroma
 
 ChromaDB writes to `/tmp/chroma`, which is writable for the Space runtime user.
 The contents are ephemeral on the free tier.
+
+`HF_TOKEN` must be a Hugging Face read token from an account that has accepted
+access to `ai4bharat/indic-bert`. To use a different embedding model, add this
+Space variable:
+
+```text
+EMBEDDING_MODEL_NAME=some-public-or-accessible-model
+```
 
 ## Extension Backend URL
 

@@ -11,12 +11,15 @@ _FINE_TUNED_PATH = os.path.join(
 )
 
 class IndicNewsEmbedder:
-    def __init__(self, model_name: str = "ai4bharat/indic-bert"):
+    def __init__(self, model_name: str | None = None):
+        model_name = model_name or os.environ.get("EMBEDDING_MODEL_NAME", "ai4bharat/indic-bert")
         print(f"Loading {model_name} into memory...")
         self.device = self._get_device()
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        model_kwargs = {"token": hf_token} if hf_token else {}
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, **model_kwargs)
+        self.model = AutoModel.from_pretrained(model_name, **model_kwargs).to(self.device)
 
         # Load fine-tuned weights if available
         fine_tuned = os.path.abspath(_FINE_TUNED_PATH)
