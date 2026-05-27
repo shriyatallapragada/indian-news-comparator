@@ -129,7 +129,11 @@ class IngestRequest(BaseModel):
     summary: str
     title: str = ""
     url: str = ""
+    source: str = ""
     published_at: str = ""   # ISO 8601 e.g. "2024-06-01T10:30:00Z"
+    bias: Optional[str] = None
+    named_entities: list[str] = []
+    core_event_slug: str = ""
 
 
 class RelatedRequest(BaseModel):
@@ -147,6 +151,16 @@ async def analyze(request: ArticleRequest):
 
     truncated = truncate_article_text(request.text)
     result = analyze_article(truncated)
+
+    bias_label = result.get("bias_classification", "Center")
+    confidence = float(result.get("confidence", 0.0))
+    if bias_label == "Left":
+        result["bias_score"] = round(-5.0 * confidence, 2)
+    elif bias_label == "Right":
+        result["bias_score"] = round(5.0 * confidence, 2)
+    else:
+        result["bias_score"] = 0.0
+
     return result
 
 
@@ -155,14 +169,22 @@ async def analyze(request: ArticleRequest):
 async def ingest(request: IngestRequest):
     """
     Call this for each RSS article you want to store.
-    Runs the RSS prompt to get bias/entities/slug, then embeds and stores.
+    If bias/entities are provided, uses them directly; otherwise tags the text
+    before embedding and storing.
     """
     if not request.summary:
         raise HTTPException(status_code=400, detail="No summary provided")
 
-    tagged = analyze_rss_summary(request.summary)
-    if "error" in tagged:
-        raise HTTPException(status_code=500, detail=tagged["error"])
+    if request.bias:
+        tagged = {
+            "bias": request.bias,
+            "named_entities": request.named_entities,
+            "core_event_slug": request.core_event_slug,
+        }
+    else:
+        tagged = analyze_rss_summary(request.summary)
+        if "error" in tagged:
+            raise HTTPException(status_code=500, detail=tagged["error"])
 
     ingest_article(
         summary=request.summary,
@@ -171,6 +193,7 @@ async def ingest(request: IngestRequest):
         core_event_slug=tagged.get("core_event_slug", ""),
         title=request.title,
         url=request.url,
+        source=request.source,
         published_at=request.published_at,
     )
     return {"status": "ingested", "tagged": tagged}

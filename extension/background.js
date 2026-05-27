@@ -95,6 +95,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "ingest") {
+    fetchJsonWithRetry(API_BASE, "/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message.payload),
+    }, 20000)
+      .then(data => sendResponse({ ok: true, data }))
+      .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
+    return true;
+  }
+
   if (message.action === "perspective") {
     fetchJsonWithRetry(ENGINE_BASE, "/analyze_perspective", {
       method: "POST",

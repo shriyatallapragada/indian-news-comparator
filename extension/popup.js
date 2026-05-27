@@ -159,10 +159,37 @@ function getNews() {
                 );
               }
             });
+
+            ingestOpenedArticle(articleText, biasData, tab);
           });
         });
       }
     );
+  });
+}
+
+function ingestOpenedArticle(articleText, biasData, tab) {
+  if (!articleText || !biasData) return;
+
+  const title = tab ? (tab.title || "").replace(/\s*[-|]\s*[^-|]+$/, "").trim() : "";
+  const url = tab && tab.url ? tab.url : "";
+
+  sendRuntimeMessage({
+    action: "ingest",
+    payload: {
+      summary: articleText,
+      title: title,
+      url: url,
+      source: getDomain(url),
+      published_at: "",
+      bias: biasData.bias_classification || "Center",
+      named_entities: biasData.named_entities || [],
+      core_event_slug: biasData.core_event_slug || "",
+    },
+  }).then(function (res) {
+    if (!res || !res.ok) {
+      console.warn("Article ingest failed:", res && res.error);
+    }
   });
 }
 
@@ -177,9 +204,16 @@ function renderResults(biasData, newsData, tab) {
   const target    = biasData.step_1_target_analysis || "Target entities not identified.";
   const reasoning = biasData.step_2_alignment_logic || "Reasoning not provided.";
   const tabTitle  = tab ? (tab.title || "Article Analysis").replace(/\s*[-|]\s*[^-|]+$/, "").trim() : "Article Analysis";
-  // Score bar starts centered — updated with the real engine score once it arrives
-  let percentage = 50;
-  let scoreLabel = "…";
+
+  const initialScore = (biasData && biasData.bias_score !== undefined && biasData.bias_score !== null)
+    ? parseFloat(biasData.bias_score)
+    : null;
+  const percentage = initialScore !== null
+    ? Math.min(100, Math.max(0, ((initialScore + 5) / 10) * 100))
+    : 50;
+  const scoreLabel = initialScore !== null
+    ? formatBiasScore(initialScore)
+    : "…";
 
   // ── 1. Original Article Analysis ─────────────────────────────────────
   let html = `<div class="card">
@@ -390,7 +424,12 @@ function updateUI(data, targetLean) {
 
     if (bubble)  { bubble.style.left = pct + "%"; bubble.textContent = label; }
     if (marker)  { marker.style.left = pct + "%"; }
-    if (leanTxt) { leanTxt.textContent = "Lean Score: " + label; }
+    if (leanTxt) {
+      const biasLabel = _currentBiasData && _currentBiasData.bias_classification
+        ? _currentBiasData.bias_classification
+        : targetLean;
+      leanTxt.textContent = "Lean Score: " + label + " (" + biasLabel + ")";
+    }
   }
 
   // ── Update Cross-Article Comparison list (engine LLM output only) ──
