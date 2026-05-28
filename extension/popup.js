@@ -13,6 +13,12 @@ function getDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return url; }
 }
 
+function formatBiasScore(score) {
+  const n = parseFloat(score);
+  if (Number.isNaN(n)) return "…";
+  return (n >= 0 ? "+" : "") + n.toFixed(1);
+}
+
 function sendRuntimeMessage(message) {
   return new Promise(function (resolve) {
     chrome.runtime.sendMessage(message, function (response) {
@@ -23,6 +29,42 @@ function sendRuntimeMessage(message) {
       resolve(response);
     });
   });
+}
+
+// Send a runtime message but fail fast after `timeoutMs` milliseconds.
+function sendWithTimeout(message, timeoutMs = 13000) {
+  return Promise.race([
+    sendRuntimeMessage(message),
+    new Promise(resolve => setTimeout(() => resolve({ ok: false, error: 'Request timed out' }), timeoutMs))
+  ]);
+}
+
+function buildNewsSearchParams(tab, entities, coreSlug) {
+  var title = (tab && tab.title ? tab.title : "news").replace(/\s*[-|]\s*[^-|]+$/, "").trim();
+  var params = new URLSearchParams({ q: title });
+  if (entities && entities.length) params.set("keywords", entities.join(","));
+  if (coreSlug) params.set("source_event", coreSlug);
+  return params.toString();
+}
+
+function searchNewsAndRender(biasData, tab, entities, coreSlug) {
+  const params = buildNewsSearchParams(tab, entities, coreSlug);
+  setLoading("Searching news sources…");
+
+  return sendWithTimeout({ action: "news", params: params })
+    .then(newsRes => {
+      if (!newsRes || !newsRes.ok) {
+        const msg = (newsRes && newsRes.error) ? newsRes.error : "News search failed";
+        console.warn("News search failed:", msg);
+        renderResults(biasData, null, tab);
+        return;
+      }
+      renderResults(biasData, newsRes.data, tab);
+    })
+    .catch(err => {
+      console.error("News search error:", err);
+      renderResults(biasData, null, tab);
+    });
 }
 
 // ── Navigation State ───────────────────────────────────────────────────────
@@ -129,7 +171,10 @@ function getNews() {
             const coreSlug = biasData.core_event_slug || "";
 
             setLoading("Finding related perspectives…");
-            chrome.runtime.sendMessage({
+
+            // Use the Promise-based helper and race with a timeout so the UI
+            // doesn't hang if the background service worker or backend stalls.
+            const relatedPromise = sendRuntimeMessage({
               action: "related",
               payload: {
                 summary: summary,
@@ -137,27 +182,27 @@ function getNews() {
                 published_at: "",
                 allow_live_fetch: false
               }
-            }, function (relRes) {
+            });
+
+            const timed = Promise.race([
+              relatedPromise,
+              new Promise(resolve => setTimeout(() => resolve({ ok: false, error: 'Related lookup timed out' }), 13000))
+            ]);
+
+            timed.then(relRes => {
               const vectorResults = relRes && relRes.ok ? relRes.data : null;
               const hasVector = vectorResults && (vectorResults.left || vectorResults.center || vectorResults.right);
 
               if (hasVector) {
                 renderResults(biasData, vectorResults, tab);
-              } else {
-                var title = (tab.title || "news").replace(/\s*[-|]\s*[^-|]+$/, "").trim();
-                var params = new URLSearchParams({ q: title });
-                if (entities.length) params.set("keywords", entities.join(","));
-                if (coreSlug) params.set("source_event", coreSlug);
-
-                setLoading("Searching news sources…");
-                chrome.runtime.sendMessage(
-                  { action: "news", params: params.toString() },
-                  function (newsRes) {
-                    const newsData = newsRes && newsRes.ok ? newsRes.data : null;
-                    renderResults(biasData, newsData, tab);
-                  }
-                );
+                return;
               }
+
+              searchNewsAndRender(biasData, tab, entities, coreSlug);
+            }).catch(err => {
+              // Fallback to news search on any unexpected error
+              console.error('Related lookup error:', err);
+              searchNewsAndRender(biasData, tab, entities, coreSlug);
             });
 
             ingestOpenedArticle(articleText, biasData, tab);
@@ -195,6 +240,18 @@ function ingestOpenedArticle(articleText, biasData, tab) {
 
 // ── Render full UI ─────────────────────────────────────────────────────────
 function renderResults(biasData, newsData, tab) {
+  try {
+    renderResultsInner(biasData, newsData, tab);
+  } catch (err) {
+    console.error("renderResults failed:", err);
+    resultScreen.innerHTML =
+      '<div class="error-msg">Could not display results.<br><small>' +
+      escHtml(err.message || String(err)) +
+      "</small></div>";
+  }
+}
+
+function renderResultsInner(biasData, newsData, tab) {
   _currentBiasData = biasData || null;
   _currentNewsData = newsData || null;
 
@@ -416,7 +473,7 @@ function updateUI(data, targetLean) {
   if (data.bias_score !== undefined && data.bias_score !== null) {
     const score = parseFloat(data.bias_score);
     const pct   = Math.min(100, Math.max(0, ((score + 5) / 10) * 100));
-    const label = (score >= 0 ? "+" : "") + score.toFixed(1);
+    const label = formatBiasScore(score);
 
     const bubble  = document.getElementById("bias-bubble");
     const marker  = document.getElementById("bias-marker");
