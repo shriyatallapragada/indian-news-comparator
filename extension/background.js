@@ -82,7 +82,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(message.payload),
-    }, 12000)
+    }, 20000)
       .then(data => sendResponse({ ok: true, data }))
       .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true;
@@ -111,7 +111,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(message.payload),
-    }, 12000)
+    }, 35000)
       .then(data => sendResponse({ ok: true, data }))
       .catch(err => sendResponse({ ok: false, error: publicBackendError(err) }));
     return true;
