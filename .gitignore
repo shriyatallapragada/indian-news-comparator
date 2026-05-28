@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 *.pth
+!train/bias_classifier.pth
 .venv/
 venv/
 
