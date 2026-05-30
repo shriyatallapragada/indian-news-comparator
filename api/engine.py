@@ -101,6 +101,9 @@ _STOP_WORDS = {
     "leak", "news", "paper", "party", "probe", "revisiting", "said", "says",
     "supreme", "that", "their", "this", "with", "would",
     "new", "delhi", "key", "takeaways", "visit", "visits",
+    "case", "cases", "records", "recorded", "statement", "statements",
+    "investigation", "investigations", "investigator", "officer", "member",
+    "team", "sit",
 }
 
 
@@ -170,7 +173,7 @@ def _extract_topic_terms(text: str, extra_terms: list = None) -> list:
         add(term)
 
     for acronym in re.findall(r"\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b", text or ""):
-        if acronym not in {"NEW", "DELHI"}:
+        if acronym not in {"NEW", "DELHI", "SIT"}:
             add(acronym)
 
     lowered = (text or "").lower()

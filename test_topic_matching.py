@@ -48,6 +48,24 @@ def test_supplied_article_relevance_rejects_unrelated_article():
     assert anchor_hit is False
 
 
+def test_supplied_article_relevance_rejects_generic_sit_overlap():
+    accepted, hits, anchor_hit = engine._is_relevant_supplied_article(
+        (
+            "Women wrestlers sexual harassment case against Brij Bhushan "
+            "Sharan Singh court records statement of SIT member."
+        ),
+        (
+            "Karnataka BJP demands transferring Dharmasthala case to CBI or NIA "
+            "and expresses suspicion over SIT investigation."
+        ),
+        ["Brij Bhushan Sharan Singh", "Vinod Tomar", "Delhi", "SIT Team"],
+    )
+
+    assert accepted is False
+    assert hits < 2
+    assert anchor_hit is False
+
+
 def test_news_perspectives_backfill_second_relevant_article(monkeypatch):
     articles = [
         {

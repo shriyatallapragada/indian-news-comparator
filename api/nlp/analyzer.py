@@ -204,7 +204,7 @@ def _extract_entities(text: str) -> list:
     acronyms = []
     ACRONYM_SKIP = {
         "AGAIN", "ANI", "HTML", "HTTP", "HTTPS", "LIVE", "NEWS", "READ", "THE",
-        "TOI", "WATCH",
+        "TOI", "WATCH", "SIT",
     }
     SHORT_ACRONYM_ALLOW = {
         "AI", "ED", "EC", "SC", "CBI", "NIA", "NDA", "UPA", "NEET", "NTA",

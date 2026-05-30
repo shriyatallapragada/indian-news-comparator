@@ -55,6 +55,8 @@ _SKIP_ENTITIES = {
     "revisiting supreme court's", "quarterly digest",
     "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
     "signal", "peace",
+    "sit", "investigation", "investigations", "officer", "member", "team",
+    "case", "cases", "statement", "statements",
 }
 
 _STOP_WORDS = {
@@ -67,6 +69,8 @@ _STOP_WORDS = {
     "delhi", "key", "takeaways", "visit", "visits",
     "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
     "signal", "peace",
+    "sit", "investigation", "investigations", "officer", "member", "team",
+    "case", "cases", "statement", "statements",
 }
 
 _DOMAIN_TERMS = {
