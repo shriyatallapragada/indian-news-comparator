@@ -74,6 +74,7 @@ const aboutScreen = document.getElementById("about-screen");
 
 // Holds the article text currently being analysed so tab clicks can re-use it.
 var _currentArticleText = "";
+var _currentArticleUrl = "";
 // Holds the real bias score from the engine so the bar can be updated
 var _engineBiasScore = null;
 // Holds the already-rendered related articles so comparison can degrade gracefully.
@@ -153,6 +154,7 @@ function getNews() {
 
           setLoading("Analysing bias with AI…");
           _currentArticleText = articleText;
+          _currentArticleUrl = tab && tab.url ? tab.url : "";
           chrome.runtime.sendMessage({ action: "analyze", text: articleText }, function (res) {
             if (chrome.runtime.lastError || !res || !res.ok) {
               const msg = (res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "Unknown error";
@@ -180,7 +182,8 @@ function getNews() {
                 summary: summary,
                 named_entities: entities,
                 published_at: "",
-                allow_live_fetch: false
+                allow_live_fetch: false,
+                exclude_url: tab && tab.url ? tab.url : ""
               }
             });
 
@@ -438,7 +441,11 @@ async function fetchPerspectiveData(userText, targetLean) {
 
 function getSelectedComparisonArticle(targetLean) {
   if (!_currentNewsData) return null;
-  return _currentNewsData[targetLean.toLowerCase()] || null;
+  const article = _currentNewsData[targetLean.toLowerCase()] || null;
+  if (article && article.url && _currentArticleUrl && article.url.replace(/\/$/, "") === _currentArticleUrl.replace(/\/$/, "")) {
+    return null;
+  }
+  return article;
 }
 
 function articleComparisonText(article) {
@@ -464,6 +471,8 @@ function buildPerspectivePayload(userText, targetLean, article) {
     alternative_text: text,
     alternative_source: articleSourceName(article),
     alternative_url: article && article.url ? article.url : "",
+    current_url: _currentArticleUrl,
+    named_entities: _currentBiasData && _currentBiasData.named_entities ? _currentBiasData.named_entities : [],
     allow_live_seed: false,
   };
 }

@@ -141,6 +141,7 @@ class RelatedRequest(BaseModel):
     named_entities: list[str] = []
     published_at: str = ""
     allow_live_fetch: bool = False
+    exclude_url: str = ""
 
 
 # ── Bias analysis for the current article the user is reading ──────────────
@@ -209,6 +210,7 @@ async def related(request: RelatedRequest):
         summary=request.summary,
         named_entities=request.named_entities,
         published_at=request.published_at,
+        exclude_url=request.exclude_url,
     )
 
     # Auto-fetch if any perspective is missing or has low entity overlap
@@ -229,6 +231,7 @@ async def related(request: RelatedRequest):
             summary=request.summary,
             named_entities=request.named_entities,
             published_at=request.published_at,
+            exclude_url=request.exclude_url,
         )
 
     return result

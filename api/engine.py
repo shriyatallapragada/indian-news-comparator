@@ -94,6 +94,7 @@ _MIN_SUPPLIED_ARTICLE_TOPIC_HITS = 2
 _TOPIC_ANCHORS = {
     "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
     "paper leak", "paper leaks", "medical entrance",
+    "mekedatu", "mekedatu reservoir", "reservoir proposal",
 }
 _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
@@ -227,21 +228,29 @@ def _needs_topic_anchor(query_terms: list) -> bool:
     )
 
 
-def _is_relevant_supplied_article(user_text: str, candidate_text: str) -> tuple[bool, int, bool]:
+def _is_relevant_supplied_article(
+    user_text: str,
+    candidate_text: str,
+    named_entities: list = None,
+) -> tuple[bool, int, bool]:
     """
     The extension may pass an article from live search. Re-check topic overlap
     here before sending the pair to the LLM so unrelated search results do not
     produce hallucinated cross-article comparisons.
     """
-    query_terms = _extract_topic_terms(user_text)
+    query_terms = _extract_topic_terms(user_text, named_entities or [])
     if not query_terms:
         return False, 0, False
 
     hits, anchor_hit = _count_topic_hits(query_terms, candidate_text)
     needs_anchor = _needs_topic_anchor(query_terms)
     if needs_anchor:
-        return anchor_hit, hits, anchor_hit
+        return anchor_hit or hits >= _MIN_SUPPLIED_ARTICLE_TOPIC_HITS, hits, anchor_hit
     return hits >= _MIN_SUPPLIED_ARTICLE_TOPIC_HITS, hits, anchor_hit
+
+
+def _normalise_url(url: str) -> str:
+    return (url or "").strip().rstrip("/")
 
 
 # ── Requirement 1: ChromaDB Semantic Search ────────────────────────────────
@@ -676,6 +685,8 @@ class PerspectiveRequest(BaseModel):
     alternative_text:   str = ""
     alternative_source: str = ""
     alternative_url:    str = ""
+    current_url:        str = ""
+    named_entities:     List[str] = []
     allow_live_seed:    bool = True
 
 
@@ -708,9 +719,13 @@ async def analyze_perspective(req: PerspectiveRequest):
     article = None
     if req.alternative_text.strip():
         supplied_text = req.alternative_text.strip()
-        is_relevant, hits, anchor_hit = _is_relevant_supplied_article(
-            req.user_text, supplied_text
-        )
+        if _normalise_url(req.alternative_url) and _normalise_url(req.alternative_url) == _normalise_url(req.current_url):
+            is_relevant, hits, anchor_hit = False, 0, False
+            print(f"[engine] Supplied {req.target_lean} article rejected: same URL as opened article")
+        else:
+            is_relevant, hits, anchor_hit = _is_relevant_supplied_article(
+                req.user_text, supplied_text, req.named_entities
+            )
         if is_relevant:
             print(
                 f"[engine] Using supplied {req.target_lean} article "

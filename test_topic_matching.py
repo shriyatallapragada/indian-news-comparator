@@ -25,6 +25,17 @@ def test_supplied_article_relevance_accepts_same_event():
     assert anchor_hit is True
 
 
+def test_supplied_article_relevance_uses_named_entities():
+    accepted, hits, _ = engine._is_relevant_supplied_article(
+        "A story about a hearing in Delhi.",
+        "The Supreme Court hearing continued today.",
+        ["Supreme Court"],
+    )
+
+    assert accepted is True
+    assert hits >= 1
+
+
 def test_supplied_article_relevance_rejects_unrelated_article():
     accepted, hits, anchor_hit = engine._is_relevant_supplied_article(
         "NEET UG exam paper leak NTA probe",

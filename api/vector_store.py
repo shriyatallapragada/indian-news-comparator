@@ -32,6 +32,7 @@ _MIN_SIMILARITY = 0.72  # below this score, treat as no match
 _TOPIC_ANCHORS = {
     "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
     "paper leak", "paper leaks", "medical entrance",
+    "mekedatu", "mekedatu reservoir", "reservoir proposal",
 }
 _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
@@ -185,6 +186,7 @@ def find_related_by_entities(
     summary: str,
     named_entities: list,
     published_at: str = "",
+    exclude_url: str = "",
 ) -> dict:
     collection = _get_collection()
 
@@ -214,6 +216,9 @@ def find_related_by_entities(
     for meta, dist, doc in zip(metadatas, distances, documents):
         bias = meta.get("bias", "")
         if bias not in buckets:
+            continue
+        if exclude_url and meta.get("url", "").strip() == exclude_url.strip():
+            print(f"[vector_store] Skipping opened article URL: {exclude_url[:70]}")
             continue
 
         stored = set(
