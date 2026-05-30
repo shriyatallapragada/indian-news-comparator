@@ -250,13 +250,19 @@ async def news(
     q: str = Query(..., description="Search query / article title"),
     keywords: str = Query("", description="Comma-separated named entities"),
     source_event: str = Query("", description="Core event slug"),
+    exclude_url: str = Query("", description="URL of the article currently open"),
 ):
     """
     Fetches Left/Center/Right articles from NewsAPI / Guardian for the given query.
     Previously served on port 5000; now unified on port 8000.
     """
     kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
-    result = get_biased_news(q, keywords=kw_list, source_event=source_event)
+    result = get_biased_news(
+        q,
+        keywords=kw_list,
+        source_event=source_event,
+        exclude_url=exclude_url,
+    )
     return result
 
 

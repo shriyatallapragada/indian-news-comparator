@@ -44,26 +44,40 @@ function buildNewsSearchParams(tab, entities, coreSlug) {
   var params = new URLSearchParams({ q: title });
   if (entities && entities.length) params.set("keywords", entities.join(","));
   if (coreSlug) params.set("source_event", coreSlug);
+  if (tab && tab.url) params.set("exclude_url", tab.url);
   return params.toString();
 }
 
-function searchNewsAndRender(biasData, tab, entities, coreSlug) {
+function countPerspectives(data) {
+  return data ? ["left", "center", "right"].filter(side => data[side]).length : 0;
+}
+
+function mergePerspectiveData(primary, fallback) {
+  const merged = { left: null, center: null, right: null };
+  ["left", "center", "right"].forEach(function (side) {
+    merged[side] = primary && primary[side] ? primary[side] : (fallback && fallback[side] ? fallback[side] : null);
+  });
+  return merged;
+}
+
+function searchNewsAndRender(biasData, tab, entities, coreSlug, primaryData) {
   const params = buildNewsSearchParams(tab, entities, coreSlug);
-  setLoading("Searching news sources…");
+  if (!primaryData) setLoading("Searching news sources…");
 
   return sendWithTimeout({ action: "news", params: params })
     .then(newsRes => {
+      const merged = mergePerspectiveData(primaryData, newsRes && newsRes.ok ? newsRes.data : null);
       if (!newsRes || !newsRes.ok) {
         const msg = (newsRes && newsRes.error) ? newsRes.error : "News search failed";
         console.warn("News search failed:", msg);
-        renderResults(biasData, null, tab);
+        renderResults(biasData, primaryData || null, tab);
         return;
       }
-      renderResults(biasData, newsRes.data, tab);
+      renderResults(biasData, merged, tab);
     })
     .catch(err => {
       console.error("News search error:", err);
-      renderResults(biasData, null, tab);
+      renderResults(biasData, primaryData || null, tab);
     });
 }
 
@@ -194,18 +208,24 @@ function getNews() {
 
             timed.then(relRes => {
               const vectorResults = relRes && relRes.ok ? relRes.data : null;
-              const hasVector = vectorResults && (vectorResults.left || vectorResults.center || vectorResults.right);
+              const vectorCount = countPerspectives(vectorResults);
 
-              if (hasVector) {
+              if (vectorCount >= 2) {
                 renderResults(biasData, vectorResults, tab);
                 return;
               }
 
-              searchNewsAndRender(biasData, tab, entities, coreSlug);
+              if (vectorCount === 1) {
+                renderResults(biasData, vectorResults, tab);
+                searchNewsAndRender(biasData, tab, entities, coreSlug, vectorResults);
+                return;
+              }
+
+              searchNewsAndRender(biasData, tab, entities, coreSlug, null);
             }).catch(err => {
               // Fallback to news search on any unexpected error
               console.error('Related lookup error:', err);
-              searchNewsAndRender(biasData, tab, entities, coreSlug);
+              searchNewsAndRender(biasData, tab, entities, coreSlug, null);
             });
 
             ingestOpenedArticle(articleText, biasData, tab);
