@@ -51,6 +51,7 @@ _SKIP_ENTITIES = {
     "india", "china", "us", "uk", "eu", "un", "ug", "the", "modi",
     "government", "minister", "parliament", "court", "police",
     "congress", "bjp", "leak", "or", "party", "state", "new", "said",
+    "new delhi", "narendra modi", "pm modi", "key", "takeaways",
     "revisiting supreme court's", "quarterly digest",
     "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
     "signal", "peace",
@@ -63,6 +64,7 @@ _STOP_WORDS = {
     "says", "should", "sources", "supreme", "that", "their", "there",
     "these", "this", "those", "through", "under", "while", "with", "would",
     "leak", "or", "party", "probe",
+    "delhi", "key", "takeaways", "visit", "visits",
     "price", "prices", "fall", "falls", "drop", "drops", "rate", "rates",
     "signal", "peace",
 }
@@ -235,7 +237,7 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
     priority = search_terms[:6]
 
     def word_present(word: str) -> bool:
-        return bool(re.search(rf'\b{re.escape(word)}\b', combined))
+        return bool(re.search(rf'\b{re.escape(word)}\b', combined, re.IGNORECASE))
 
     def phrase_present(phrase: str) -> bool:
         return bool(re.search(rf'(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])', combined, re.IGNORECASE))
@@ -277,6 +279,57 @@ def is_relevant(article: dict, keywords: list, original_keywords: list = None) -
             if matches >= needed_matches:
                 return True
     return False
+
+
+def _topic_signature_terms(keywords: list, original_keywords: list = None) -> list:
+    terms = build_search_terms("", (keywords or []) + (original_keywords or []), limit=10)
+    signature = []
+    for term in terms:
+        key = term.lower().strip()
+        words = [
+            word for word in re.findall(r"[a-z0-9-]+", key)
+            if len(word) >= 4 and word not in _STOP_WORDS and word not in _SKIP_ENTITIES
+        ]
+        if key in _DOMAIN_TERMS or any(domain in key for domain in _DOMAIN_TERMS):
+            signature.append(term)
+        elif " " in key and words:
+            signature.append(term)
+        elif key not in _COUNTRY_TERMS and words:
+            signature.append(term)
+    return signature[:6]
+
+
+def strongly_matches_topic(article: dict, keywords: list, original_keywords: list = None) -> bool:
+    """
+    Backfill slots only with articles that share event-specific terms. This
+    prevents generic India-news results from being shown as extra perspectives.
+    """
+    signature = _topic_signature_terms(keywords, original_keywords)
+    if not signature:
+        return is_relevant(article, keywords, original_keywords)
+
+    combined = f"{article.get('title') or ''} {article.get('description') or ''}"
+
+    def word_present(word: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(word)}\b", combined, re.IGNORECASE))
+
+    def phrase_present(phrase: str) -> bool:
+        return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", combined, re.IGNORECASE))
+
+    hits = 0
+    for term in signature:
+        key = term.lower().strip()
+        if " " in key:
+            words = [
+                word for word in re.findall(r"[a-z0-9-]+", key)
+                if len(word) >= 4 and word not in _STOP_WORDS and word not in _SKIP_ENTITIES
+            ]
+            if phrase_present(term) or (len(words) >= 2 and all(word_present(word) for word in words)):
+                hits += 1
+        elif word_present(key):
+            hits += 1
+
+    return hits >= 1 if len(signature) <= 2 else hits >= 2
 
 
 def fetch_from_guardian(keywords: list, keyword: str) -> list:
@@ -376,7 +429,11 @@ def fetch_from_google_news(keywords: list, keyword: str) -> list:
         return []
 
 
-def get_biased_news(keyword, keywords=None, source_event: str = ""):
+def normalise_url(url: str) -> str:
+    return (url or "").strip().rstrip("/")
+
+
+def get_biased_news(keyword, keywords=None, source_event: str = "", exclude_url: str = ""):
     all_articles = []
     clean_keywords = build_search_terms(keyword, keywords or [], limit=6)
 
@@ -431,10 +488,22 @@ def get_biased_news(keyword, keywords=None, source_event: str = ""):
     else:
         all_articles = relevant_from_newsapi
 
-    return process_perspectives(all_articles, keywords=clean_keywords, original_keywords=keywords or [], source_event=source_event)
+    return process_perspectives(
+        all_articles,
+        keywords=clean_keywords,
+        original_keywords=keywords or [],
+        source_event=source_event,
+        exclude_url=exclude_url,
+    )
 
 
-def process_perspectives(articles: list, keywords: list = None, original_keywords: list = None, source_event: str = "") -> dict:
+def process_perspectives(
+    articles: list,
+    keywords: list = None,
+    original_keywords: list = None,
+    source_event: str = "",
+    exclude_url: str = "",
+) -> dict:
     """
     1. Deduplicate by URL.
     2. Pre-filter by keyword overlap — drop articles that don't mention any entity.
@@ -444,10 +513,14 @@ def process_perspectives(articles: list, keywords: list = None, original_keyword
     # 1. Deduplicate by URL
     seen_urls = set()
     unique_articles = []
+    excluded = normalise_url(exclude_url)
     for article in articles:
         url = article.get("url")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
+        normalised = normalise_url(url)
+        if excluded and normalised == excluded:
+            continue
+        if normalised and normalised not in seen_urls:
+            seen_urls.add(normalised)
             unique_articles.append(article)
 
     # 2. Pre-filter: must mention at least one keyword word
@@ -459,7 +532,11 @@ def process_perspectives(articles: list, keywords: list = None, original_keyword
         relevant = unique_articles
 
     # Hard cap at 10 to limit Groq calls
-    relevant = relevant[:10]
+    relevant = relevant[:16]
+    strong_relevant = [
+        article for article in relevant
+        if strongly_matches_topic(article, keywords or [], original_keywords or [])
+    ]
     print(f"Classifying {len(relevant)} articles")
 
     # 3. Classify concurrently
@@ -495,6 +572,34 @@ def process_perspectives(articles: list, keywords: list = None, original_keyword
             if publisher and publisher not in used_publishers:
                 output[key] = article
                 used_publishers.add(publisher)
+                break
+
+    # If the classifier puts everything into one bucket, still show a second
+    # genuinely relevant article from a different publisher instead of leaving
+    # the comparison surface looking empty.
+    if sum(1 for article in output.values() if article) < 2:
+        used_urls = {
+            normalise_url(article.get("url"))
+            for article in output.values()
+            if article and article.get("url")
+        }
+        for key in ["left", "center", "right"]:
+            if output[key]:
+                continue
+            for article in strong_relevant:
+                url = normalise_url(article.get("url"))
+                publisher = article.get("source", {}).get("name")
+                if not url or url in used_urls:
+                    continue
+                if publisher and publisher in used_publishers:
+                    continue
+                output[key] = article
+                article["bias"] = "Related"
+                used_urls.add(url)
+                if publisher:
+                    used_publishers.add(publisher)
+                break
+            if sum(1 for article in output.values() if article) >= 2:
                 break
 
     return output

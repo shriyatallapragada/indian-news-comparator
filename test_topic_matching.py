@@ -98,3 +98,31 @@ def test_news_perspectives_excludes_opened_url(monkeypatch):
 
     urls = {article["url"] for article in result.values() if article}
     assert "https://example.com/open" not in urls
+
+
+def test_news_perspectives_do_not_backfill_unrelated_india_news(monkeypatch):
+    articles = [
+        {
+            "title": "India, Italy upgrade ties to special strategic partnership after Modi-Meloni talks",
+            "description": "The two sides agreed on defence cooperation and a bilateral trade target.",
+            "url": "https://example.com/italy",
+            "source": {"name": "BusinessLine"},
+        },
+        {
+            "title": "'NEET, CBSE, SSC. And today CUET': Rahul Gandhi attacks exam conduct",
+            "description": "NEW DELHI: Congress MP Rahul Gandhi criticised exam irregularities.",
+            "url": "https://example.com/neet",
+            "source": {"name": "Times of India"},
+        },
+    ]
+    monkeypatch.setattr(news_fetch, "analyze_rss_summary", lambda _: {"bias": "Center"})
+
+    result = news_fetch.process_perspectives(
+        articles,
+        keywords=["Modi-Meloni Talks", "Italy", "strategic", "deals", "visit"],
+        original_keywords=["Narendra Modi", "PM Modi", "Italy"],
+    )
+
+    urls = {article["url"] for article in result.values() if article}
+    assert "https://example.com/italy" in urls
+    assert "https://example.com/neet" not in urls

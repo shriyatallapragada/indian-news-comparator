@@ -38,6 +38,7 @@ _STOP_WORDS = {
     "after", "also", "article", "court", "digest", "from", "have", "large",
     "leak", "news", "paper", "party", "probe", "revisiting", "said", "says",
     "supreme", "that", "their", "this", "with", "would",
+    "new", "delhi", "key", "takeaways", "visit", "visits",
 }
 
 
@@ -94,7 +95,8 @@ def _extract_topic_terms(text: str, named_entities: list = None) -> list:
         add(entity)
 
     for acronym in re.findall(r"\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?\b", text or ""):
-        add(acronym)
+        if acronym not in {"NEW", "DELHI"}:
+            add(acronym)
 
     lowered = (text or "").lower()
     for phrase in _TOPIC_ANCHORS | {"supreme court", "national testing agency"}:
@@ -239,6 +241,9 @@ def find_related_by_entities(
                 # No entity overlap at all — skip, let auto-fetch handle it
                 print(f"[vector_store] {bias_key} — no entity overlap, skipping")
                 break
+            if not needs_anchor and hits < 2:
+                print(f"[vector_store] {bias_key} — weak topic overlap ({hits}), skipping")
+                continue
             if needs_anchor and not anchor_hit:
                 print(f"[vector_store] {bias_key} — missing topic anchor, skipping")
                 continue
