@@ -1,0 +1,25 @@
+# Environment & secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pth
+.venv/
+venv/
+
+# ChromaDB data (large binary files)
+api/chroma_db/
+chroma_db/
+chroma/
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Model weights
+*.bin
+*.pt
+train/fine_tuned_bias_model.pth
