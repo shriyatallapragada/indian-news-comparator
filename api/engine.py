@@ -90,6 +90,7 @@ _pipeline: Optional[FullBiasPipeline] = None
 _collection = None
 _anchor_vectors: dict = {}  # kept as fallback if pipeline weights missing
 _MIN_PERSPECTIVE_SIMILARITY = 0.72
+_MIN_SUPPLIED_ARTICLE_TOPIC_HITS = 2
 _TOPIC_ANCHORS = {
     "neet", "neet-ug", "nta", "ugc", "upsc", "exam", "examination",
     "paper leak", "paper leaks", "medical entrance",
@@ -191,7 +192,7 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: str 
     anchor_hit = False
 
     def word_present(word: str) -> bool:
-        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_combined))
+        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_combined, re.IGNORECASE))
 
     def phrase_present(phrase: str) -> bool:
         return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", candidate_combined, re.IGNORECASE))
@@ -206,7 +207,7 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: str 
             ]
             return len(words) >= 2 and all(word_present(word) for word in words)
         if re.fullmatch(r"[a-z0-9-]{2,}", term):
-            return term not in _STOP_WORDS and word_present(term.upper())
+            return term not in _STOP_WORDS and word_present(term)
         return term in candidate_lower
 
     for term in query_terms:
@@ -217,6 +218,30 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: str 
                 anchor_hit = True
 
     return hits, anchor_hit
+
+
+def _needs_topic_anchor(query_terms: list) -> bool:
+    return any(
+        term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS)
+        for term in query_terms
+    )
+
+
+def _is_relevant_supplied_article(user_text: str, candidate_text: str) -> tuple[bool, int, bool]:
+    """
+    The extension may pass an article from live search. Re-check topic overlap
+    here before sending the pair to the LLM so unrelated search results do not
+    produce hallucinated cross-article comparisons.
+    """
+    query_terms = _extract_topic_terms(user_text)
+    if not query_terms:
+        return False, 0, False
+
+    hits, anchor_hit = _count_topic_hits(query_terms, candidate_text)
+    needs_anchor = _needs_topic_anchor(query_terms)
+    if needs_anchor:
+        return anchor_hit, hits, anchor_hit
+    return hits >= _MIN_SUPPLIED_ARTICLE_TOPIC_HITS, hits, anchor_hit
 
 
 # ── Requirement 1: ChromaDB Semantic Search ────────────────────────────────
@@ -281,10 +306,7 @@ def get_perspective(user_text_vector: list, target_bias: str,
         return None
 
     query_terms = _extract_topic_terms(user_text)
-    needs_anchor = any(
-        term in _TOPIC_ANCHORS or any(anchor in term for anchor in _TOPIC_ANCHORS)
-        for term in query_terms
-    )
+    needs_anchor = _needs_topic_anchor(query_terms)
 
     candidates = []
     for doc, meta, dist in zip(docs, metadatas, distances):
@@ -685,12 +707,26 @@ async def analyze_perspective(req: PerspectiveRequest):
     # 2. Prefer the already-vetted article chosen by /api/related or /news.
     article = None
     if req.alternative_text.strip():
-        article = {
-            "text": req.alternative_text.strip(),
-            "source": req.alternative_source,
-            "bias_label": req.target_lean,
-            "url": req.alternative_url,
-        }
+        supplied_text = req.alternative_text.strip()
+        is_relevant, hits, anchor_hit = _is_relevant_supplied_article(
+            req.user_text, supplied_text
+        )
+        if is_relevant:
+            print(
+                f"[engine] Using supplied {req.target_lean} article "
+                f"({hits} topic hits, anchor={anchor_hit})"
+            )
+            article = {
+                "text": supplied_text,
+                "source": req.alternative_source,
+                "bias_label": req.target_lean,
+                "url": req.alternative_url,
+            }
+        else:
+            print(
+                f"[engine] Supplied {req.target_lean} article rejected: "
+                f"{hits} topic hits, anchor={anchor_hit}"
+            )
     elif req.allow_live_seed:
         article = get_perspective(user_vector, req.target_lean, req.user_text)
 

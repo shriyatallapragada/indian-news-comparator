@@ -117,7 +117,7 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: set)
     anchor_hit = False
 
     def word_present(word: str) -> bool:
-        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_text))
+        return bool(re.search(rf"\b{re.escape(word)}\b", candidate_text, re.IGNORECASE))
 
     def phrase_present(phrase: str) -> bool:
         return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", candidate_text, re.IGNORECASE))
@@ -135,7 +135,7 @@ def _count_topic_hits(query_terms: list, candidate_text: str, stored_terms: set)
             ]
             return len(words) >= 2 and all(word_present(word) for word in words)
         if re.fullmatch(r"[a-z0-9-]{2,}", term):
-            return term not in _STOP_WORDS and word_present(term.upper())
+            return term not in _STOP_WORDS and word_present(term)
         return term in candidate_lower
 
     for term in query_terms:
