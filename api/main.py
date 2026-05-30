@@ -178,14 +178,15 @@ async def analyze(request: ArticleRequest):
     truncated = truncate_article_text(request.text)
     result = analyze_article(truncated)
 
-    bias_label = result.get("bias_classification", "Center")
-    confidence = float(result.get("confidence", 0.0))
-    if bias_label == "Left":
-        result["bias_score"] = round(-5.0 * confidence, 2)
-    elif bias_label == "Right":
-        result["bias_score"] = round(5.0 * confidence, 2)
-    else:
-        result["bias_score"] = 0.0
+    if result.get("bias_score") is None:
+        bias_label = result.get("bias_classification", "Center")
+        confidence = float(result.get("confidence", 0.0))
+        if bias_label == "Left":
+            result["bias_score"] = round(-5.0 * confidence, 2)
+        elif bias_label == "Right":
+            result["bias_score"] = round(5.0 * confidence, 2)
+        else:
+            result["bias_score"] = 0.0
 
     return result
 

@@ -10,6 +10,7 @@ import sys
 import os
 import re
 import torch
+import torch.nn.functional as F
 from typing import Optional
 
 # Make the repo root importable so `model` package resolves correctly
@@ -18,6 +19,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from model import IndicNewsEmbedder, NewsComparatorBrain
+from model.bias_classifier import FullBiasPipeline, LABELS
 
 # ── spaCy singleton ────────────────────────────────────────────────────────
 _spacy_nlp = None
@@ -32,6 +34,7 @@ def _get_spacy():
 # ── Singleton model instances (loaded once at import time) ─────────────────
 _embedder: Optional[IndicNewsEmbedder] = None
 _brain: Optional[NewsComparatorBrain] = None
+_pipeline: Optional[FullBiasPipeline] = None
 
 # Reference vectors for Left / Center / Right bias anchors
 _BIAS_ANCHORS = {
@@ -78,6 +81,23 @@ def _classify_bias(text: str) -> tuple:
     _load_models()
     with torch.no_grad():
         vec = _embedder.get_embeddings(text)
+
+    pipeline = _get_pipeline()
+    if pipeline is not None:
+        try:
+            with torch.no_grad():
+                logits = pipeline(vec)
+                probs = F.softmax(logits, dim=-1).squeeze(0)
+            idx = int(probs.argmax().item())
+            label = LABELS[idx]
+            confidence = float(probs[idx].item())
+            score = round((float(probs[2].item()) - float(probs[0].item())) * 5, 2)
+            print(f"[analyzer] Trained classifier: {label} ({confidence:.2f}), score {score:+.2f}")
+            return label, confidence, score, "trained_classifier"
+        except Exception as e:
+            print(f"[analyzer] Trained classifier failed ({e}), falling back to anchors")
+
+    with torch.no_grad():
         state = _brain(vec)
 
     divergences = {
@@ -90,7 +110,21 @@ def _classify_bias(text: str) -> tuple:
     others = [v for k, v in divergences.items() if k != best_label]
     confidence = (sum(others) / len(others)) - divergences[best_label]
     confidence = max(0.0, min(1.0, confidence))
-    return best_label, confidence
+    score = round((1.0 if best_label == "Right" else -1.0 if best_label == "Left" else 0.0) * confidence * 5, 2)
+    return best_label, confidence, score, "anchor_fallback"
+
+
+def _get_pipeline() -> Optional[FullBiasPipeline]:
+    global _pipeline
+    if _pipeline is not None:
+        return _pipeline
+
+    candidate = FullBiasPipeline()
+    if not candidate.load():
+        return None
+    candidate.eval()
+    _pipeline = candidate
+    return _pipeline
 
 
 def _clean_text(text: str) -> str:
@@ -233,7 +267,7 @@ def analyze_article(text: str) -> dict:
     Full analysis for the article the user is currently reading.
     Returns the shape expected by the extension's popup.js.
     """
-    bias_label, confidence = _classify_bias(text)
+    bias_label, confidence, score, model_source = _classify_bias(text)
     entities = _extract_entities(text)
     summary = _summarise(text)
     slug = _make_slug(text)
@@ -242,6 +276,8 @@ def analyze_article(text: str) -> dict:
     return {
         "bias_classification": bias_label,
         "confidence": round(confidence, 4),
+        "bias_score": score,
+        "model_source": model_source,
         "named_entities": entities,
         "article_summary": summary,
         "core_event_slug": slug,
@@ -262,7 +298,7 @@ def analyze_rss_summary(summary: str) -> dict:
     Lightweight tagging for RSS/ingested articles.
     Returns bias, named_entities, and core_event_slug.
     """
-    bias_label, _ = _classify_bias(summary)
+    bias_label, _, _, _ = _classify_bias(summary)
     entities = _extract_entities(summary)
     slug = _make_slug(summary)
 
