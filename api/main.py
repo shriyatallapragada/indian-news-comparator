@@ -14,6 +14,7 @@ from news_fetch import get_biased_news, build_search_terms, fetch_from_google_ne
 import asyncio
 import os
 import requests as http_requests
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 
 _thread_pool = ThreadPoolExecutor(max_workers=3)
@@ -110,6 +111,30 @@ def _fetch_and_ingest(query: str, named_entities: list):
         print(f"[auto-fetch] Ingested [{bias}] {source}")
         if all(buckets.values()):
             break
+
+
+def _get_biased_news_compat(
+    q: str,
+    keywords: list,
+    source_event: str = "",
+    exclude_url: str = "",
+) -> dict:
+    """
+    HF Spaces can briefly run mixed module versions during rebuilds. Only pass
+    exclude_url when the loaded helper supports it so /news never crashes.
+    """
+    kwargs = {"keywords": keywords, "source_event": source_event}
+    if "exclude_url" in inspect.signature(get_biased_news).parameters:
+        kwargs["exclude_url"] = exclude_url
+
+    result = get_biased_news(q, **kwargs)
+    if exclude_url and "exclude_url" not in kwargs:
+        normalised = exclude_url.strip().rstrip("/")
+        for key in ("left", "center", "right"):
+            article = result.get(key)
+            if article and article.get("url", "").strip().rstrip("/") == normalised:
+                result[key] = None
+    return result
 
 app = FastAPI(title="News Comparator API")
 
@@ -257,12 +282,7 @@ async def news(
     Previously served on port 5000; now unified on port 8000.
     """
     kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
-    result = get_biased_news(
-        q,
-        keywords=kw_list,
-        source_event=source_event,
-        exclude_url=exclude_url,
-    )
+    result = _get_biased_news_compat(q, kw_list, source_event, exclude_url)
     return result
 
 
